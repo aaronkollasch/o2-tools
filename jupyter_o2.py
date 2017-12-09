@@ -211,7 +211,7 @@ class PinentryClosedException(PinentryException):
 
 class Pinentry(object):
     def __init__(self, pinentry_path="pinentry", fallback_to_getpass=True):
-        if cmd_exists(pinentry_path):
+        if not cmd_exists(pinentry_path):
             if fallback_to_getpass and os.isatty(sys.stdout.fileno()):
                 self._ask = self._ask_with_getpass
                 self._close = self._close_getpass
@@ -366,7 +366,7 @@ login_ssh.sendline(SOURCE_JUPYTER_CALL)
 login_ssh.prompt()
 login_ssh.sendline(jp_call)
 login_ssh.logfile_read = sys.stdout.buffer
-site_pat = re.compile("\W(https?://localhost:{}/\?token=\w+)\W".format(jp_port).encode('utf-8'))
+site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-\.\/]+\?token=\w+)\s".format(jp_port).encode('utf-8'))
 login_ssh.PROMPT = site_pat
 login_ssh.prompt()
 jp_site = login_ssh.after.decode('utf-8').strip()

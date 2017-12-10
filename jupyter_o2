@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 #
 # A script to launch and connect to a Jupyter session on Orchestra 2,
@@ -36,20 +37,23 @@ try:
     # test the server with nslookup <host>
     # your current DNS server may not have entries for the individual O2 login nodes
     import dns.resolver
-except ModuleNotFoundError:
+except ImportError:
     dns = None
 
-#####################################################
-# variables to set                                  #
-# choose a jp_port that is open on your machine     #
-#####################################################
+#############################################################
+# variables to set                                          #
+# choose a DEFAULT_JP_PORT that is open on your machine     #
+# and set SOURCE_JUPYTER_CALL to an appropriate command     #
+#############################################################
 
 HOST = "o2.hms.harvard.edu"
 DEFAULT_JP_PORT = 8887  # pick an open port on your machine
 DEFAULT_JP_TIME = "0-3:00"  # 3 hours
 DEFAULT_JP_MEM = "1G"
 DEFAULT_JP_CORES = 1
-SOURCE_JUPYTER_CALL = "py35"  # the bash command to enter your jupyter environment (one line, use semicolons if needed)
+
+# the bash command to enter your jupyter environment (one line, use semicolons if needed)
+SOURCE_JUPYTER_CALL = "source ~/.conda/envs/py35/bin/activate py35"
 
 parser = argparse.ArgumentParser(description='Launch and connect to a Jupyter session on O2.')
 parser.add_argument("user", type=str, help="O2 username")
@@ -77,15 +81,19 @@ else:
 
 if dns is not None:
     my_resolver = dns.resolver.Resolver()
+    dns_server_groups = [  # dns servers that have entries for loginXX.o2.rc.hms.harvard.edu
+        my_resolver.nameservers,  # current nameservers, checked first
+        ["134.174.17.6", "134.174.141.2"],  # HMS nameservers
+        ["128.103.1.1", "128.103.201.100", "128.103.200.101"]  # HU nameservers
+    ]
+    # test that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
 else:
     my_resolver = None
 
-dns_server_groups = [  # dns servers that have entries for loginXX.o2.rc.hms.harvard.edu
-    my_resolver.nameservers,                                # current nameservers, checked first
-    ["134.174.17.6", "134.174.141.2"],                      # HMS nameservers
-    ["128.103.1.1", "128.103.201.100", "128.103.200.101"]   # HU nameservers
-]
-# test that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
+if sys.version_info.major == 3:
+    stdout_buffer = sys.stdout.buffer
+else:
+    stdout_buffer = sys.stdout
 
 
 #####################################################
@@ -159,17 +167,17 @@ for sig in (SIGABRT, SIGINT, SIGTERM):
 
 
 #####################################################################
-# first import pin entry and security functions from pysectools,    #
-# updated version of pysectools for python 3:                       #
-#   uses bytestrings and flushes stdin after writing                #
-#   slightly modified from Greg V:                                  #
+# pin entry and security functions from pysectools                  #
 #                                                                   #
+# updated pysectools for python 3:                                  #
+#   uses bytestrings and flushes stdin after writing                #
+#                                                                   #
+# slightly modified from Greg V:                                    #
 # Copyright © 2013-2015 Greg V <greg@unrelenting.technology>        #
 # This work is free. You can redistribute it and/or modify it       #
 # under the terms of the                                            #
 # Do What The Fuck You Want To Public License, Version 2,           #
 # as published by Sam Hocevar.                                      #
-#                                                                   #
 #####################################################################
 
 
@@ -330,18 +338,18 @@ login_ssh.logfile_send = None
 login_ssh.logfile_read = None
 login_ssh.login(host, user, o2_pass)
 
-# get hostname
-login_ssh.sendline("echo $HOSTNAME")
+# get the login hostname
+login_ssh.sendline("hostname")
 login_ssh.prompt()
 jp_login_host = login_ssh.before.decode('utf-8').strip().split('\n')[1]
 print("hostname: {}".format(jp_login_host))
 
-# enter interactive
+# enter an interactive session
 print()
 # print("\nsrun -t 0-3:00 --pty -p interactive --x11 /bin/bash")
 pass_pat = re.compile(b"[\w-]+@[\w-]+'s password: ")  # e.g. "user@compute-e-16-175's password: "
 login_ssh.PROMPT = pass_pat
-login_ssh.logfile_read = FilteredOut(sys.stdout.buffer, b'srun')
+login_ssh.logfile_read = FilteredOut(stdout_buffer, b'srun')
 login_ssh.sendline(srun_call)
 if not login_ssh.prompt():
     print("the timeout was reached.")
@@ -351,7 +359,7 @@ login_ssh.logfile_send = None
 login_ssh.logfile_read = None
 login_ssh.write(o2_pass.encode('utf-8') + b"\n")
 
-# commands for within interactive: get hostname
+# within interactive: get the name of the interactive node
 login_ssh.PROMPT = login_ssh.UNIQUE_PROMPT
 login_ssh.sendline("unset PROMPT_COMMAND; PS1='[PEXPECT]\$ '")
 login_ssh.prompt()
@@ -365,8 +373,10 @@ print("interactive host: {}\n".format(jp_interactive_host))
 login_ssh.sendline(SOURCE_JUPYTER_CALL)
 login_ssh.prompt()
 login_ssh.sendline(jp_call)
-login_ssh.logfile_read = sys.stdout.buffer
-site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-\.\/]+\?token=\w+)\s".format(jp_port).encode('utf-8'))
+login_ssh.logfile_read = stdout_buffer
+
+# get the address jupyter is running at
+site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-\.\/]+(\?token=\w+)?)\s".format(jp_port).encode('utf-8'))
 login_ssh.PROMPT = site_pat
 login_ssh.prompt()
 jp_site = login_ssh.after.decode('utf-8').strip()
@@ -384,8 +394,8 @@ second_ssh.logfile = None  # prevent password from being printed into a logfile
 second_ssh.logfile_send = None
 second_ssh.logfile_read = None
 second_ssh.login(jp_login_host, user, o2_pass)
-# second_ssh.logfile_read = sys.stdout.buffer
-while second_ssh.prompt(0.1):  # digest all prompts
+# second_ssh.logfile_read = stdout_buffer
+while second_ssh.prompt(0.1):  # digest all prompts within 0.1s
     pass
 
 # ssh into the running interactive node
@@ -400,11 +410,13 @@ second_ssh.logfile_send = None
 second_ssh.logfile_read = None
 second_ssh.write(o2_pass.encode('utf-8') + b"\n")
 zero(o2_pass)  # password is not needed anymore
-second_ssh.logfile_read = sys.stdout.buffer
+second_ssh.logfile_read = stdout_buffer
 
+# open Jupyter in browser
 print("\nJupyter is ready! Access at:\n{}\nOpening in browser...".format(jp_site))
 webbrowser.open(jp_site, new=2)
 
+# keep the ssh session alive and allow input such as Ctrl-C to close Jupyter
 login_ssh.logfile = None
 login_ssh.logfile_read = None
 login_ssh.logfile_send = None

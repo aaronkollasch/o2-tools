@@ -48,7 +48,7 @@ except ImportError:
 
 HOST = "o2.hms.harvard.edu"
 DEFAULT_JP_PORT = 8887  # pick an open port on your machine
-DEFAULT_JP_TIME = "0-3:00"  # 3 hours
+DEFAULT_JP_TIME = "0-12:00"  # 12 hours
 DEFAULT_JP_MEM = "1G"
 DEFAULT_JP_CORES = 1
 
@@ -102,8 +102,8 @@ else:
 
 
 def check_dns(hostname):
-    dns_err_code = 0
     if dns is not None:
+        dns_err_code = 0
         for dns_servers in dns_server_groups:
             try:
                 my_resolver.nameservers = dns_servers
@@ -117,6 +117,8 @@ def check_dns(hostname):
                 break
             except dns.resolver.NXDOMAIN:
                 dns_err_code = 2
+    else:
+        dns_err_code = -1
     if dns_err_code == 1:
         print("Found IP: {}".format(jp_login_host))
     elif dns_err_code == 2:
@@ -307,12 +309,12 @@ class Pinentry(object):
         return x.replace("%", "%25").replace("\n", "%0A")
 
 
-###################################################################
-#   Now run SSH                                                   #
-#   First SSH into an interactive node and run jupyter notebook   #
-#   Then SSH into that node to set up forwarding                  #
-#   Finally, open the jupyter notebook page in the browser.       #
-###################################################################
+#############################################################
+#   Now run SSH                                             #
+#   First SSH into an interactive node and run jupyter.     #
+#   Then SSH into that node to set up forwarding.           #
+#   Finally, open the jupyter page in the browser.          #
+#############################################################
 
 pinentry = Pinentry(pinentry_path=my_pinentry_path, fallback_to_getpass=True)
 o2_pass = pinentry.ask(prompt="Enter your passphrase: ",
@@ -366,7 +368,7 @@ login_ssh.prompt()
 login_ssh.sendline("hostname | sed 's/\..*//'")
 login_ssh.prompt()
 jp_interactive_host = login_ssh.before.decode('utf-8').strip().split('\n')[1]
-print("interactive host: {}\n".format(jp_interactive_host))
+print("interactive node: {}\n".format(jp_interactive_host))
 
 # start jupyter
 # print("\njupyter notebook --port={} --browser='none'".format(jp_port))

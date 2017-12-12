@@ -12,6 +12,8 @@ Example: `jupyter_o2 js123 notebook`
 
 This will launch an X11-enabled ssh with port forwarding, start an interactive node running `jupyter notebook`, ssh into that interactive node to allow requests to be forwarded, and finally open the notebook in your browser.
 
+### Configuration, etc.
+
 #### Installation
 Within `jupyter_o2`:
 - Change `SOURCE_JUPYTER_CALL` to a one-line command you use to enter the environment containing jupyter. Use semicolons if necessary.
@@ -19,7 +21,7 @@ Within `jupyter_o2`:
 
 Either run jupyter_o2 with `./jupyter_o2` or copy it into a folder within your `$PATH`. 
 
-#### Troubleshooting jupyter_o2
+#### Troubleshooting
 ##### nbsignatures.db
 If jupyter hangs when opening notebooks for the first time in any session, and the console shows error messages such as:
   > `The signatures database cannot be opened; maybe it is corrupted or encrypted.` 

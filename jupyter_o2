@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # author: Aaron Kollasch
-# date: 2017-12-11
+# date: 2017-12-12
 """A script to launch and connect to a Jupyter session on Orchestra 2.
 
 Usage: jupyter_o2 <USER> <subcommand>
@@ -65,14 +65,14 @@ parser.add_argument("-m", "--mem", type=str, default=DEFAULT_JP_MEM, help="Memor
 parser.add_argument("-c", "-n", dest="cores", type=int, default=DEFAULT_JP_CORES, help="Cores to allocate for Jupyter")
 parser.add_argument("-k", "--keepalive",  default=False, action='store_true',
                     help="Keep interactive session alive after exiting Jupyter")
-args = parser.parse_args(sys.argv[1:])
+pargs = parser.parse_args(sys.argv[1:])
 
-user = args.user
+user = pargs.user
 host = HOST
-jp_port = args.port
+jp_port = pargs.port
 
-srun_call = "srun -t {} --mem {} -n {} --pty -p interactive --x11 /bin/bash".format(args.time, args.mem, args.cores)
-jp_call = "jupyter {} --port={} --browser='none'".format(args.subcommand, jp_port)
+srun_call = "srun -t {} --mem {} -n {} --pty -p interactive --x11 /bin/bash".format(pargs.time, pargs.mem, pargs.cores)
+jp_call = "jupyter {} --port={} --browser='none'".format(pargs.subcommand, jp_port)
 
 if sys.platform.startswith("linux"):
     my_pinentry_path = "/usr/bin/pinentry"
@@ -112,7 +112,7 @@ def check_dns(hostname, dns_groups=dns_server_groups):
             try:
                 my_resolver.nameservers = dns_servers
                 if dns_err_code > 0:
-                    print("Could not resolve domain. Trying with nameservers: {}".format(dns_servers))
+                    eprint("Could not resolve domain. Trying with nameservers: {}".format(dns_servers))
                     answer = my_resolver.query(hostname)
                     hostname = answer[0].address
                     dns_err_code = 1
@@ -126,8 +126,23 @@ def check_dns(hostname, dns_groups=dns_server_groups):
     if dns_err_code == 1:
         print("Found IP: {}".format(jp_login_host))
     elif dns_err_code == 2:
-        print("No IP found for {}".format(jp_login_host))
+        eprint("No IP found for {}".format(jp_login_host))
     return dns_err_code, hostname
+
+
+class CustomSSH(pxssh.pxssh):
+    def silence_logs(self):
+        """Prevent printing into any logfile."""
+        self.logfile = None
+        self.logfile_read = None
+        self.logfile_send = None
+
+    def digest_all_prompts(self, timeout=0.1):
+        """Digest all prompts within 0.1s of the last prompt."""
+        if timeout == -1:
+            timeout = self.timeout
+        while self.prompt(timeout):
+            pass
 
 
 class FilteredOut(object):
@@ -151,6 +166,10 @@ class FilteredOut(object):
         return bytestr
 
 
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+
 def clean(*_):
     print("Cleaning up\r")
     if "o2_pass" in globals():
@@ -165,13 +184,21 @@ def clean(*_):
         if not second_ssh.closed:
             print("Closing second_ssh")
         login_ssh.close(force=True)
-    os._exit(0)
+
+
+def term(*_):
+    clean()
+    sys.stdout.close()
+    sys.stderr.close()
+    sys.stdin.close()
+    os.closerange(0, 3)
+    os._exit(1)
 
 
 # perform clean() on exit or interrupt
 atexit.register(clean)
 for sig in (SIGABRT, SIGINT, SIGTERM):
-    signal(sig, clean)
+    signal(sig, term)
 
 
 #####################################################################
@@ -329,26 +356,23 @@ class Pinentry(object):
 
 pinentry = Pinentry(pinentry_path=my_pinentry_path, fallback_to_getpass=True)
 o2_pass = pinentry.ask(prompt="Enter your passphrase: ",
-                       description="Connect to O2 server for jupyter {}".format(args.subcommand),
+                       description="Connect to O2 server for jupyter {}".format(pargs.subcommand),
                        error="No password entered", validator=lambda x: x is not None and len(x) > 0)
 pinentry.close()
 
 # start login ssh
 print("ssh {}@{}".format(user, host))
-# check that the host can be found
 dns_err, host = check_dns(host)
 if dns_err == 1:
     print("ssh {}@{}".format(user, host))
 elif dns_err == 2:
-    exit(1)
-login_ssh = pxssh.pxssh(timeout=60, ignore_sighup=False, options={
+    sys.exit(1)
+login_ssh = CustomSSH(timeout=60, ignore_sighup=False, options={
     "ForwardX11": "yes",
     "LocalForward": "{} 127.0.0.1:{}".format(jp_port, jp_port),
     "PubkeyAuthentication": "no"})
 login_ssh.force_password = True
-login_ssh.logfile = None  # prevent password from being printed into a logfile
-login_ssh.logfile_send = None
-login_ssh.logfile_read = None
+login_ssh.silence_logs()
 login_ssh.login(host, user, o2_pass)
 
 # get the login hostname
@@ -365,12 +389,10 @@ login_ssh.PROMPT = pass_pat
 login_ssh.logfile_read = FilteredOut(stdout_buffer, b'srun')
 login_ssh.sendline(srun_call)
 if not login_ssh.prompt():
-    print("the timeout was reached.")
-    exit(1)
-login_ssh.logfile = None  # prevent password from being printed into a logfile
-login_ssh.logfile_send = None
-login_ssh.logfile_read = None
-login_ssh.write(o2_pass.encode('utf-8') + b"\n")
+    eprint("the timeout was reached.")
+    sys.exit(1)
+login_ssh.silence_logs()
+login_ssh.sendline(o2_pass)
 
 # within interactive: get the name of the interactive node
 login_ssh.PROMPT = login_ssh.UNIQUE_PROMPT
@@ -391,7 +413,13 @@ login_ssh.logfile_read = stdout_buffer
 # get the address jupyter is running at
 site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-\.\/]+(\?token=\w+)?)\s".format(jp_port).encode('utf-8'))
 login_ssh.PROMPT = site_pat
-login_ssh.prompt()
+if not login_ssh.prompt(5):  # timed out; failed to launch jupyter
+    if pargs.keepalive:
+        interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')  # exits when you log out of the login shell
+        login_ssh.interact(output_filter=interact_filter.exit_on_find)
+    else:
+        eprint("failed to launch jupyter.")
+        sys.exit(1)
 jp_site = login_ssh.after.decode('utf-8').strip()
 
 # log in to the second ssh
@@ -400,40 +428,32 @@ dns_err, jp_login_host = check_dns(jp_login_host)
 if dns_err == 1:
     print("ssh {}@{}".format(user, jp_login_host))
 elif dns_err == 2:
-    exit(1)
-second_ssh = pxssh.pxssh(timeout=10, ignore_sighup=False, options={"PubkeyAuthentication": "no"})
+    sys.exit(1)
+second_ssh = CustomSSH(timeout=10, ignore_sighup=False, options={"PubkeyAuthentication": "no"})
 second_ssh.force_password = True
-second_ssh.logfile = None  # prevent password from being printed into a logfile
-second_ssh.logfile_send = None
-second_ssh.logfile_read = None
+second_ssh.silence_logs()
 second_ssh.login(jp_login_host, user, o2_pass)
-# second_ssh.logfile_read = stdout_buffer
-while second_ssh.prompt(0.1):  # digest all prompts within 0.1s
-    pass
+second_ssh.digest_all_prompts()
 
 # ssh into the running interactive node
 print("\nssh -N -L {0}:127.0.0.1:{0} {1}".format(jp_port, jp_interactive_host))
 second_ssh.PROMPT = pass_pat
 second_ssh.sendline("ssh -N -L {0}:127.0.0.1:{0} {1}".format(jp_port, jp_interactive_host))
 if not second_ssh.prompt():
-    print("the timeout was reached.")
-    exit(1)
-second_ssh.logfile = None  # prevent password from being printed into a logfile
-second_ssh.logfile_send = None
-second_ssh.logfile_read = None
-second_ssh.write(o2_pass.encode('utf-8') + b"\n")
+    eprint("the timeout was reached.")
+    sys.exit(1)
+second_ssh.silence_logs()
+second_ssh.sendline(o2_pass)
 zero(o2_pass)  # password is not needed anymore
-second_ssh.logfile_read = stdout_buffer
+second_ssh.logfile_read = stdout_buffer  # print any errors/output from second_ssh to stdout
 
 # open Jupyter in browser
 print("\nJupyter is ready! Access at:\n{}\nOpening in browser...".format(jp_site))
 webbrowser.open(jp_site, new=2)
 
 # keep the ssh session alive and allow input such as Ctrl-C to close Jupyter
-login_ssh.logfile = None
-login_ssh.logfile_read = None
-login_ssh.logfile_send = None
-if args.keepalive:
+login_ssh.silence_logs()
+if pargs.keepalive:
     interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')  # exits when you log out of the login shell
     login_ssh.interact(output_filter=interact_filter.exit_on_find)
 else:

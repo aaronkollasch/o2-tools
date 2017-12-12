@@ -1,24 +1,31 @@
 #!/bin/bash
-# jobinfo provides information on your SLURM jobs
-# source this script in ~/.bashrc
+# ------------------------------------------------------------------
+# [Aaron Kollasch]  jobinfo.sh
+#                   Provides information on your SLURM jobs.
+#
+# Usage:            jobinfo <job id>
+#
+# Installation:     Source this script in your ~/.bashrc file.
+# ------------------------------------------------------------------
 
 jobinfo() {
+    # if no argument is given, then print info on all running or recently finished jobs
     if [ $# -eq 0 ]; then
         squeue -u $USER -t 'all'
-	return 1
+	    return 0
     fi
 
-# # print job name and time limit before seff output
-#    printf "Job Name: "
-#    sacct -o jobname -j $1 -n -P | head -n 1
-#    printf "Time Limit: "
-#    sacct -o timelimit -j $1 -n -P | head -n 1
+    # print job name and time limit before seff output
     echo "Job Name: $(sacct -o jobname,timelimit -j $1 -n -P | head -n 1 | sed -e 's/|/\nTime Limit: /')"
 
+    # seff prints efficiency and other info for the job
     seff $1
     echo
+
+    # sacct prints a table of info on completed job steps
     sacct -o jobid,alloccpus,state,reqmem,maxrss,averss,maxvmsize,elapsed -j $1
-    
+
+    # sstat prints info on currently running job steps
     if [ -z "$( sstat -j $1 2>&1 > /dev/null )" ]; then
         echo
         sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j $1
@@ -30,12 +37,15 @@ jobinfo() {
 # - if there are no currently running jobs, recently completed jobs will also appear.
 _comp_jobinfo()
 {
+    # complete with currently running jobs
     _script_commands="$(squeue -u $USER -h -o '%i' | tr '\n' ' ')"
 
+    # if there are no currently running jobs, complete with all recent jobs
     if [ -z "$_script_commands" ]; then
         _script_commands="$(squeue -u $USER -h -o '%i' -t 'all' -S '-e' | tr '\n' ' ')"
     fi
 
+    # otherwise, complete with nothing
     if [ -z "$_script_commands" ]; then
         _script_commands=" "
     fi
@@ -48,4 +58,3 @@ _comp_jobinfo()
     return 0
 }
 complete -o nospace -F _comp_jobinfo jobinfo
-

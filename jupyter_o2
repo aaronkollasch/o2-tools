@@ -1,23 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# author: Aaron Kollasch
+# date: 2017-12-11
+"""A script to launch and connect to a Jupyter session on Orchestra 2.
 
-#
-# A script to launch and connect to a Jupyter session on Orchestra 2,
-# an HPC cluster managed by the HMS Resesarch Computing group.
-#
-# Usage: jupyter_o2 <USER> <subcommand>
+Usage: jupyter_o2 <USER> <subcommand>
 
-# Example: jupyter_o2 js123 notebook
-# This will launch an X11-enabled ssh, start an interactive node running jupyter notebook,
-# ssh into that interactive node to allow requests to be forwarded,
-# and finally open the notebook in your browser.
-#
-# If jupyter hangs when opening notebooks for the first time in any session,
-# and the console shows a "The signatures database cannot be opened" error,
-# enter an interactive session and generate a notebook config using
-#   `jupyter notebook --generate-config`
-# then set c.NotebookNotary.db_file = ':memory:'
-#
+Example: jupyter_o2 js123 notebook
+    This will launch an X11-enabled ssh, start an interactive node running jupyter notebook,
+    ssh into that interactive node to allow requests to be forwarded,
+    and finally open the notebook in your browser.
+
+Troubleshooting:
+    If jupyter hangs when opening notebooks for the first time in any session,
+    and the console shows a "The signatures database cannot be opened" error,
+    enter an interactive session and generate a notebook config using
+      `jupyter notebook --generate-config`
+    then set c.NotebookNotary.db_file = ':memory:'
+
+"""
 
 from __future__ import print_function
 import sys
@@ -26,11 +27,11 @@ import argparse
 import getpass  # fallback if pinentry is not installed (optional "brew install pinentry" on macs)
 import subprocess
 import re
-from pexpect import pxssh
 import webbrowser
 import ctypes
 import atexit
 from signal import signal, SIGABRT, SIGINT, SIGTERM
+from pexpect import pxssh
 try:
     # optional import of dnspython to resolve "Unknown host" errors
     # if you get errors like "Could not establish connection to host",
@@ -90,6 +91,7 @@ if dns is not None:
     # test that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
 else:
     my_resolver = None
+    dns_server_groups = None
 
 if sys.version_info.major == 3:
     stdout_buffer = sys.stdout.buffer
@@ -102,10 +104,11 @@ else:
 #####################################################
 
 
-def check_dns(hostname):
+def check_dns(hostname, dns_groups=dns_server_groups):
+    """Check if hostname is reachable by any group of dns servers."""
     if dns is not None:
         dns_err_code = 0
-        for dns_servers in dns_server_groups:
+        for dns_servers in dns_groups:
             try:
                 my_resolver.nameservers = dns_servers
                 if dns_err_code > 0:

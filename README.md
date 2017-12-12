@@ -1,11 +1,18 @@
 # o2-tools
-Tools for use with Orchestra 2  
+Tools for use with Orchestra 2, an HPC cluster managed by the HMS Resesarch Computing group.  
+- `jobinfo.sh` Get info on currently running SLURM jobs.  
 - `jupyter_o2` Run jupyter over ssh and connect to it in your browser.
-- `jobinfo.sh` Get info on currently running SLURM jobs.
+
+## jobinfo.sh
+A bash script that provides information on your SLURM jobs.
+
+Usage: `jobinfo <job id>`  
+Tab autocompletion of the job id is supported.
+
+Source this script in your `~/.bashrc` file.
 
 ## jupyter_o2
-A python script to launch and connect to a Jupyter session on Orchestra 2,
-an HPC cluster managed by the HMS Resesarch Computing group.
+A python script to launch and connect to a Jupyter session on O2.
 
 Usage: `jupyter_o2 <USER> <subcommand>`
 

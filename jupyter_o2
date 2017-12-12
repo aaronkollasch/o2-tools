@@ -23,7 +23,7 @@ from __future__ import print_function
 import sys
 import os
 import argparse
-import getpass  # fallback if pinentry is not installed ("brew install pinentry" on macs)
+import getpass  # fallback if pinentry is not installed (optional "brew install pinentry" on macs)
 import subprocess
 import re
 from pexpect import pxssh
@@ -62,7 +62,8 @@ parser.add_argument("-p", "--port", type=int, default=DEFAULT_JP_PORT, help="Ava
 parser.add_argument("-t", "--time", type=str, default=DEFAULT_JP_TIME, help="Time to run Jupyter")
 parser.add_argument("-m", "--mem", type=str, default=DEFAULT_JP_MEM, help="Memory to allocate for Jupyter")
 parser.add_argument("-c", "-n", dest="cores", type=int, default=DEFAULT_JP_CORES, help="Cores to allocate for Jupyter")
-parser.add_argument("-k", "--keepalive",  default=False, action='store_true', help="Keep interactive session alive after exiting Jupyter")
+parser.add_argument("-k", "--keepalive",  default=False, action='store_true',
+                    help="Keep interactive session alive after exiting Jupyter")
 args = parser.parse_args(sys.argv[1:])
 
 user = args.user
@@ -82,9 +83,9 @@ else:
 if dns is not None:
     my_resolver = dns.resolver.Resolver()
     dns_server_groups = [  # dns servers that have entries for loginXX.o2.rc.hms.harvard.edu
-        my_resolver.nameservers,  # current nameservers, checked first
-        ["134.174.17.6", "134.174.141.2"],  # HMS nameservers
-        ["128.103.1.1", "128.103.201.100", "128.103.200.101"]  # HU nameservers
+        my_resolver.nameservers,                                # current nameservers, checked first
+        ["134.174.17.6", "134.174.141.2"],                      # HMS nameservers
+        ["128.103.1.1", "128.103.201.100", "128.103.200.101"]   # HU nameservers
     ]
     # test that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
 else:
@@ -151,6 +152,8 @@ def clean(*_):
     print("Cleaning up\r")
     if "o2_pass" in globals():
         zero(o2_pass)
+    if "pinentry" in globals():
+        pinentry.close()
     if "login_ssh" in globals():
         if not login_ssh.closed:
             print("Closing login_ssh")
@@ -283,7 +286,10 @@ class Pinentry(object):
                 self._comm("SETERROR %s" % self._esc(error))
             self.process.stdin.write(b"GETPIN\n")
             self.process.stdin.flush()
-            password = self._waitfor("D ", breakat="OK")
+            try:
+                password = self._waitfor("D ", breakat="OK", errat="ERR")
+            except PinentryException:
+                sys.exit(0)
             if password is not None:
                 password = password[2:].replace("\n", "")
         return password
@@ -291,11 +297,13 @@ class Pinentry(object):
     def _close_pinentry(self):
         return self.process.kill()
 
-    def _waitfor(self, what, breakat=None):
+    def _waitfor(self, what, breakat=None, errat=None):
         out = ""
         while not out.startswith(what):
             if breakat is not None and out.startswith(breakat):
                 break
+            elif errat is not None and out.startswith(errat):
+                raise PinentryException()
             out = self.process.stdout.readline().decode('utf-8')
         return out
 

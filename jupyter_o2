@@ -137,8 +137,8 @@ class CustomSSH(pxssh.pxssh):
         self.logfile_read = None
         self.logfile_send = None
 
-    def digest_all_prompts(self, timeout=0.1):
-        """Digest all prompts within 0.1s of the last prompt."""
+    def digest_all_prompts(self, timeout=0.5):
+        """Digest all prompts until there is a delay of <timeout>."""
         if timeout == -1:
             timeout = self.timeout
         while self.prompt(timeout):
@@ -437,7 +437,6 @@ second_ssh = CustomSSH(timeout=10, ignore_sighup=False, options={"PubkeyAuthenti
 second_ssh.force_password = True
 second_ssh.silence_logs()
 second_ssh.login(jp_login_host, user, o2_pass)
-second_ssh.digest_all_prompts()
 
 # ssh into the running interactive node
 print("\nssh -N -L {0}:127.0.0.1:{0} {1}".format(jp_port, jp_interactive_host))

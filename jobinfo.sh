@@ -34,7 +34,7 @@ jobinfo() {
     # sprio prints priority info on jobs that have not yet started
     if [ "$(sprio -j $1)" != "Unable to find jobs matching user/id(s) specified" ]; then
         echo
-	    sprio -j $1
+        sprio -j $1
     fi
 }
 

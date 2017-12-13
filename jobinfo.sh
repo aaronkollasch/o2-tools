@@ -30,6 +30,12 @@ jobinfo() {
         echo
         sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j $1
     fi
+
+    # sprio prints priority info on jobs that have not yet started
+    if [ "$(sprio -j $1)" != "Unable to find jobs matching user/id(s) specified" ]; then
+        echo
+	    sprio -j $1
+    fi
 }
 
 # jobinfo supports tab autocomplete to fill job ids

@@ -3,6 +3,7 @@
 # author: Aaron Kollasch
 # date: 2017-12-12
 """A script to launch and connect to a Jupyter session on Orchestra 2.
+as described at https://wiki.rc.hms.harvard.edu/display/O2/Jupyter+on+O2
 
 Usage: jupyter_o2 <USER> <subcommand>
 

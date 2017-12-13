@@ -415,7 +415,7 @@ login_ssh.sendline(jp_call)
 login_ssh.logfile_read = stdout_buffer
 
 # get the address jupyter is running at
-site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-\.\/]+(\?token=\w+)?)\s".format(jp_port).encode('utf-8'))
+site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s".format(jp_port).encode('utf-8'))
 login_ssh.PROMPT = site_pat
 if not login_ssh.prompt(5):  # timed out; failed to launch jupyter
     if pargs.keepalive:

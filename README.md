@@ -36,9 +36,8 @@ Either run jupyter_o2 with `./jupyter_o2` or copy it into a folder within your `
 ##### nbsignatures.db
 If jupyter hangs when opening notebooks for the first time in any session, and the console 
 shows error messages such as:
-  > `The signatures database cannot be opened; maybe it is corrupted or encrypted.` 
-  
-  > `Failed commiting signatures database to disk.`
+  > `The signatures database cannot be opened; maybe it is corrupted or encrypted.`  
+  > `Failed commiting signatures database to disk.`  
 
   Disabling the signatures database may be the best option, since there is no non-networked
   file system shared between all the interactive compute nodes.

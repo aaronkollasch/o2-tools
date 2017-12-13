@@ -252,6 +252,10 @@ class PinentryClosedException(PinentryException):
     pass
 
 
+class PinentryErrorException(PinentryException):
+    pass
+
+
 class Pinentry(object):
     def __init__(self, pinentry_path="pinentry", fallback_to_getpass=True):
         if not cmd_exists(pinentry_path):
@@ -318,7 +322,7 @@ class Pinentry(object):
             self.process.stdin.flush()
             try:
                 password = self._waitfor("D ", breakat="OK", errat="ERR")
-            except PinentryException:
+            except PinentryErrorException:
                 sys.exit(0)
             if password is not None:
                 password = password[2:].replace("\n", "")
@@ -333,7 +337,7 @@ class Pinentry(object):
             if breakat is not None and out.startswith(breakat):
                 break
             elif errat is not None and out.startswith(errat):
-                raise PinentryException()
+                raise PinentryErrorException()
             out = self.process.stdout.readline().decode('utf-8')
         return out
 

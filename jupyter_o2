@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # author: Aaron Kollasch
-# date: 2017-12-12
+# date: 2017-12-15
 """A script to launch and connect to a Jupyter session on Orchestra 2.
 as described at https://wiki.rc.hms.harvard.edu/display/O2/Jupyter+on+O2
 
@@ -48,58 +48,42 @@ except ImportError:
 # and set SOURCE_JUPYTER_CALL to an appropriate command     #
 #############################################################
 
-HOST = "o2.hms.harvard.edu"
+DEFAULT_HOST = "o2.hms.harvard.edu"
 DEFAULT_JP_PORT = 8887  # pick an open port on your machine
 DEFAULT_JP_TIME = "0-12:00"  # 12 hours
 DEFAULT_JP_MEM = "1G"
 DEFAULT_JP_CORES = 1
+DEFAULT_JP_SUBCOMMAND = "notebook"
 
 # the bash command to enter your jupyter environment (one line, use semicolons if needed)
 SOURCE_JUPYTER_CALL = "source ~/.conda/envs/py35/bin/activate py35"
 
-parser = argparse.ArgumentParser(description='Launch and connect to a Jupyter session on O2.')
-parser.add_argument("user", type=str, help="O2 username")
-parser.add_argument("subcommand", help="the subcommand to launch")
-parser.add_argument("-p", "--port", type=int, default=DEFAULT_JP_PORT, help="Available port on your system")
-parser.add_argument("-t", "--time", type=str, default=DEFAULT_JP_TIME, help="Time to run Jupyter")
-parser.add_argument("-m", "--mem", type=str, default=DEFAULT_JP_MEM, help="Memory to allocate for Jupyter")
-parser.add_argument("-c", "-n", dest="cores", type=int, default=DEFAULT_JP_CORES, help="Cores to allocate for Jupyter")
-parser.add_argument("-k", "--keepalive",  default=False, action='store_true',
-                    help="Keep interactive session alive after exiting Jupyter")
-parser.add_argument("--kq", "--keepxquartz", dest="keepxquartz",  default=False, action='store_true',
-                    help="Do not quit XQuartz")
-pargs = parser.parse_args(sys.argv[1:])
-
-user = pargs.user
-host = HOST
-jp_port = pargs.port
-
-srun_call = "srun -t {} --mem {} -n {} --pty -p interactive --x11 /bin/bash".format(pargs.time, pargs.mem, pargs.cores)
-jp_call = "jupyter {} --port={} --browser='none'".format(pargs.subcommand, jp_port)
+SRUN_CALL_FORMAT = "srun -t {} --mem {} -n {} --pty -p interactive --x11 /bin/bash"
+JP_CALL_FORMAT = "jupyter {} --port={} --browser='none'"
+SITE_PATTERN_FORMAT = "\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s"  # format with jupyter port
+PASSWORD_PATTERN = re.compile(b"[\w-]+@[\w-]+'s password: ")  # e.g. "user@compute-e-16-175's password: "
 
 if sys.platform.startswith("linux"):
-    my_pinentry_path = "/usr/bin/pinentry"
+    PINENTRY_PATH = "/usr/bin/pinentry"
 elif sys.platform == "darwin":
-    my_pinentry_path = "/usr/local/bin/pinentry"
+    PINENTRY_PATH = "/usr/local/bin/pinentry"
 else:
-    my_pinentry_path = "pinentry"
+    PINENTRY_PATH = "pinentry"
 
 if dns is not None:
-    my_resolver = dns.resolver.Resolver()
-    dns_server_groups = [  # dns servers that have entries for loginXX.o2.rc.hms.harvard.edu
-        my_resolver.nameservers,                                # current nameservers, checked first
+    DNS_SERVER_GROUPS = [  # dns servers that have entries for loginXX.o2.rc.hms.harvard.edu
+        dns.resolver.Resolver().nameservers,                    # current nameservers, checked first
         ["134.174.17.6", "134.174.141.2"],                      # HMS nameservers
         ["128.103.1.1", "128.103.201.100", "128.103.200.101"]   # HU nameservers
     ]
     # test that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
 else:
-    my_resolver = None
-    dns_server_groups = None
+    DNS_SERVER_GROUPS = None
 
 if sys.version_info.major == 3:
-    stdout_buffer = sys.stdout.buffer
+    STDOUT_BUFFER = sys.stdout.buffer
 else:
-    stdout_buffer = sys.stdout
+    STDOUT_BUFFER = sys.stdout
 
 
 #####################################################
@@ -107,12 +91,181 @@ else:
 #####################################################
 
 
-def check_dns(hostname, dns_groups=dns_server_groups):
+class JupyterO2(object):
+    def __init__(
+            self,
+            user,
+            host,
+            subcommand=DEFAULT_JP_SUBCOMMAND,
+            jp_port=DEFAULT_JP_PORT,
+            jp_time=DEFAULT_JP_TIME,
+            jp_mem=DEFAULT_JP_MEM,
+            jp_cores=DEFAULT_JP_CORES,
+            keepalive=False,
+            keepxquartz=False,
+    ):
+        self.user = user
+        self.host = host
+        self.subcommand = subcommand
+        self.jp_port = jp_port
+        self.jp_time = jp_time
+        self.jp_mem = jp_mem
+        self.jp_cores = jp_cores
+        self.keep_alive = keepalive
+        self.keep_xquartz = keepxquartz
+
+        self.srun_call = SRUN_CALL_FORMAT.format(self.jp_time, self.jp_mem, self.jp_cores)
+        self.jp_call = JP_CALL_FORMAT.format(self.subcommand, self.jp_port)
+
+        self.__login_ssh = CustomSSH(timeout=60, ignore_sighup=False, options={
+            "ForwardX11": "yes",
+            "LocalForward": "{} 127.0.0.1:{}".format(self.jp_port, self.jp_port),
+            "PubkeyAuthentication": "no"})
+        self.__second_ssh = CustomSSH(timeout=10, ignore_sighup=False, options={"PubkeyAuthentication": "no"})
+
+        # perform clean() on exit or interrupt
+        atexit.register(self.clean)
+        for sig in (SIGABRT, SIGINT, SIGTERM):
+            signal(sig, self.term)
+
+        self.__pinentry = Pinentry(pinentry_path=PINENTRY_PATH, fallback_to_getpass=True)
+        self.__o2_pass = self.__pinentry.ask(
+            prompt="Enter your passphrase: ",
+            description="Connect to O2 server for jupyter {}".format(self.subcommand),
+            error="No password entered", validator=lambda x: x is not None and len(x) > 0)
+        self.__pinentry.close()
+
+    def connect(self):
+        # start login ssh
+        print("ssh {}@{}".format(self.user, self.host))
+        dns_err, host = check_dns(self.host)
+        if dns_err == 1:
+            print("ssh {}@{}".format(self.user, host))
+        elif dns_err == 2:
+            sys.exit(1)
+        self.__login_ssh.force_password = True
+        self.__login_ssh.silence_logs()
+        self.__login_ssh.login(host, self.user, self.__o2_pass)
+
+        # get the login hostname
+        self.__login_ssh.sendline("hostname")
+        self.__login_ssh.prompt()
+        jp_login_host = self.__login_ssh.before.decode('utf-8').strip().split('\n')[1]
+        print("hostname: {}".format(jp_login_host))
+
+        # enter an interactive session
+        print()
+        # print("\nsrun -t 0-3:00 --pty -p interactive --x11 /bin/bash")
+        self.__login_ssh.PROMPT = PASSWORD_PATTERN
+        self.__login_ssh.logfile_read = FilteredOut(STDOUT_BUFFER, b'srun')
+        self.__login_ssh.sendline(self.srun_call)
+        if not self.__login_ssh.prompt():
+            eprint("the timeout was reached.")
+            sys.exit(1)
+        self.__login_ssh.silence_logs()
+        self.__login_ssh.sendline(self.__o2_pass)
+
+        # within interactive: get the name of the interactive node
+        self.__login_ssh.PROMPT = self.__login_ssh.UNIQUE_PROMPT
+        self.__login_ssh.sendline("unset PROMPT_COMMAND; PS1='[PEXPECT]\$ '")
+        self.__login_ssh.prompt()
+        self.__login_ssh.sendline("hostname | sed 's/\..*//'")
+        self.__login_ssh.prompt()
+        jp_interactive_host = self.__login_ssh.before.decode('utf-8').strip().split('\n')[1]
+        print("interactive node: {}\n".format(jp_interactive_host))
+
+        # start jupyter
+        # print("\njupyter notebook --port={} --browser='none'".format(self.jp_port))
+        self.__login_ssh.sendline(SOURCE_JUPYTER_CALL)
+        self.__login_ssh.prompt()
+        self.__login_ssh.sendline(self.jp_call)
+        self.__login_ssh.logfile_read = STDOUT_BUFFER
+
+        # get the address jupyter is running at
+        site_pat = re.compile(SITE_PATTERN_FORMAT.format(self.jp_port).encode('utf-8'))
+        self.__login_ssh.PROMPT = site_pat
+        if not self.__login_ssh.prompt():  # timed out; failed to launch jupyter
+            if self.keep_alive:
+                interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')  # exits when you log out of the login shell
+                self.__login_ssh.interact(output_filter=interact_filter.exit_on_find)
+            else:
+                eprint("failed to launch jupyter.")
+                sys.exit(1)
+        jp_site = self.__login_ssh.after.decode('utf-8').strip()
+
+        # log in to the second ssh
+        print("\nssh {}@{}".format(self.user, jp_login_host))
+        dns_err, jp_login_host = check_dns(jp_login_host)
+        if dns_err == 1:
+            print("ssh {}@{}".format(self.user, jp_login_host))
+        elif dns_err == 2:
+            sys.exit(1)
+        self.__second_ssh.force_password = True
+        self.__second_ssh.silence_logs()
+        self.__second_ssh.login(jp_login_host, self.user, self.__o2_pass)
+
+        # ssh into the running interactive node
+        print("\nssh -N -L {0}:127.0.0.1:{0} {1}".format(self.jp_port, jp_interactive_host))
+        self.__second_ssh.PROMPT = PASSWORD_PATTERN
+        self.__second_ssh.sendline("ssh -N -L {0}:127.0.0.1:{0} {1}".format(self.jp_port, jp_interactive_host))
+        if not self.__second_ssh.prompt():
+            eprint("the timeout was reached.")
+            sys.exit(1)
+        self.__second_ssh.silence_logs()
+        self.__second_ssh.sendline(self.__o2_pass)
+        zero(self.__o2_pass)  # password is not needed anymore
+        self.__second_ssh.logfile_read = STDOUT_BUFFER  # print any errors/output from self.__second_ssh to stdout
+
+        # open Jupyter in browser
+        print("\nJupyter is ready! Access at:\n{}\nOpening in browser...\n".format(jp_site))
+        webbrowser.open(jp_site, new=2)
+
+        # quit XQuartz because the application is not necessary to keep the connection open.
+        if not self.keep_xquartz:
+            try:
+                try_quit_xquartz()
+            except:
+                print("Quitting XQuartz Failed")
+                pass
+
+        # keep the ssh session alive and allow input such as Ctrl-C to close Jupyter
+        self.__login_ssh.silence_logs()
+        if self.keep_alive:  # exit when you log out of the login shell
+            interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')
+            self.__login_ssh.interact(output_filter=interact_filter.exit_on_find)
+        else:  # exit when jupyter exits and [PEXPECT]$ appears
+            interact_filter = FilteredOut(None, b'[PEXPECT]$ ')
+            self.__login_ssh.interact(output_filter=interact_filter.exit_on_find)
+
+    def clean(self, *_):
+        print("Cleaning up\r")
+        if "o2_pass" in globals():
+            zero(self.__o2_pass)
+        if "pinentry" in globals():
+            self.__pinentry.close()
+        if not self.__login_ssh.closed:
+            print("Closing login_ssh")
+            self.__login_ssh.close(force=True)
+        if not self.__second_ssh.closed:
+            print("Closing second_ssh")
+            self.__second_ssh.close(force=True)
+
+    def term(self, *_):
+        self.clean()
+        sys.stdout.close()
+        sys.stderr.close()
+        sys.stdin.close()
+        os.closerange(0, 3)
+        os._exit(1)
+
+
+def check_dns(hostname, dns_groups=DNS_SERVER_GROUPS):
     """Check if hostname is reachable by any group of dns servers."""
     if dns is not None:
         dns_err_code = 0
         for dns_servers in dns_groups:
             try:
+                my_resolver = dns.resolver.Resolver()
                 my_resolver.nameservers = dns_servers
                 if dns_err_code > 0:
                     eprint("Could not resolve domain. Trying with nameservers: {}".format(dns_servers))
@@ -187,7 +340,7 @@ def try_quit_xquartz():
     if not xquartz_is_open():
         return
 
-    print("Quitting XQuartz... ", end='', flush=True)
+    print("Quitting XQuartz... ", end='')
 
     try:
         from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, \
@@ -219,37 +372,6 @@ def xquartz_is_open():
 def quit_xquartz():
     if sys.platform == "darwin":
         subprocess.call("osascript -e 'quit app \"XQuartz\"'", shell=True)
-
-
-def clean(*_):
-    print("Cleaning up\r")
-    if "o2_pass" in globals():
-        zero(o2_pass)
-    if "pinentry" in globals():
-        pinentry.close()
-    if "login_ssh" in globals():
-        if not login_ssh.closed:
-            print("Closing login_ssh")
-        login_ssh.close(force=True)
-    if "second_ssh" in globals():
-        if not second_ssh.closed:
-            print("Closing second_ssh")
-        login_ssh.close(force=True)
-
-
-def term(*_):
-    clean()
-    sys.stdout.close()
-    sys.stderr.close()
-    sys.stdin.close()
-    os.closerange(0, 3)
-    os._exit(1)
-
-
-# perform clean() on exit or interrupt
-atexit.register(clean)
-for sig in (SIGABRT, SIGINT, SIGTERM):
-    signal(sig, term)
 
 
 #####################################################################
@@ -402,118 +524,32 @@ class Pinentry(object):
         return x.replace("%", "%25").replace("\n", "%0A")
 
 
-#############################################################
-#   Now run SSH                                             #
-#   First SSH into an interactive node and run jupyter.     #
-#   Then SSH into that node to set up forwarding.           #
-#   Finally, open the jupyter page in the browser.          #
-#############################################################
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Launch and connect to a Jupyter session on O2.')
+    parser.add_argument("user", type=str, help="O2 username")
+    parser.add_argument("subcommand", help="the subcommand to launch")
+    parser.add_argument("--host", type=str, default=DEFAULT_HOST, help="Host to connect to")
+    parser.add_argument("-p", "--port", type=int, default=DEFAULT_JP_PORT, help="Available port on your system")
+    parser.add_argument("-t", "--time", type=str, default=DEFAULT_JP_TIME, help="Time to run Jupyter")
+    parser.add_argument("-m", "--mem", type=str, default=DEFAULT_JP_MEM, help="Memory to allocate for Jupyter")
+    parser.add_argument("-c", "-n", dest="cores", type=int, default=DEFAULT_JP_CORES,
+                        help="Cores to allocate for Jupyter")
+    parser.add_argument("-k", "--keepalive", default=False, action='store_true',
+                        help="Keep interactive session alive after exiting Jupyter")
+    parser.add_argument("--kq", "--keepxquartz", dest="keepxquartz", default=False, action='store_true',
+                        help="Do not quit XQuartz")
+    pargs = parser.parse_args(sys.argv[1:])
 
-pinentry = Pinentry(pinentry_path=my_pinentry_path, fallback_to_getpass=True)
-o2_pass = pinentry.ask(prompt="Enter your passphrase: ",
-                       description="Connect to O2 server for jupyter {}".format(pargs.subcommand),
-                       error="No password entered", validator=lambda x: x is not None and len(x) > 0)
-pinentry.close()
+    jupyter_o2 = JupyterO2(
+        user=pargs.user,
+        host=pargs.host,
+        subcommand=pargs.subcommand,
+        jp_port=pargs.port,
+        jp_time=pargs.time,
+        jp_mem=pargs.mem,
+        jp_cores=pargs.cores,
+        keepalive=pargs.keepalive,
+        keepxquartz=pargs.keepxquartz,
+    )
 
-# start login ssh
-print("ssh {}@{}".format(user, host))
-dns_err, host = check_dns(host)
-if dns_err == 1:
-    print("ssh {}@{}".format(user, host))
-elif dns_err == 2:
-    sys.exit(1)
-login_ssh = CustomSSH(timeout=60, ignore_sighup=False, options={
-    "ForwardX11": "yes",
-    "LocalForward": "{} 127.0.0.1:{}".format(jp_port, jp_port),
-    "PubkeyAuthentication": "no"})
-login_ssh.force_password = True
-login_ssh.silence_logs()
-login_ssh.login(host, user, o2_pass)
-
-# get the login hostname
-login_ssh.sendline("hostname")
-login_ssh.prompt()
-jp_login_host = login_ssh.before.decode('utf-8').strip().split('\n')[1]
-print("hostname: {}".format(jp_login_host))
-
-# enter an interactive session
-print()
-# print("\nsrun -t 0-3:00 --pty -p interactive --x11 /bin/bash")
-pass_pat = re.compile(b"[\w-]+@[\w-]+'s password: ")  # e.g. "user@compute-e-16-175's password: "
-login_ssh.PROMPT = pass_pat
-login_ssh.logfile_read = FilteredOut(stdout_buffer, b'srun')
-login_ssh.sendline(srun_call)
-if not login_ssh.prompt():
-    eprint("the timeout was reached.")
-    sys.exit(1)
-login_ssh.silence_logs()
-login_ssh.sendline(o2_pass)
-
-# within interactive: get the name of the interactive node
-login_ssh.PROMPT = login_ssh.UNIQUE_PROMPT
-login_ssh.sendline("unset PROMPT_COMMAND; PS1='[PEXPECT]\$ '")
-login_ssh.prompt()
-login_ssh.sendline("hostname | sed 's/\..*//'")
-login_ssh.prompt()
-jp_interactive_host = login_ssh.before.decode('utf-8').strip().split('\n')[1]
-print("interactive node: {}\n".format(jp_interactive_host))
-
-# start jupyter
-# print("\njupyter notebook --port={} --browser='none'".format(jp_port))
-login_ssh.sendline(SOURCE_JUPYTER_CALL)
-login_ssh.prompt()
-login_ssh.sendline(jp_call)
-login_ssh.logfile_read = stdout_buffer
-
-# get the address jupyter is running at
-site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s".format(jp_port).encode('utf-8'))
-login_ssh.PROMPT = site_pat
-if not login_ssh.prompt():  # timed out; failed to launch jupyter
-    if pargs.keepalive:
-        interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')  # exits when you log out of the login shell
-        login_ssh.interact(output_filter=interact_filter.exit_on_find)
-    else:
-        eprint("failed to launch jupyter.")
-        sys.exit(1)
-jp_site = login_ssh.after.decode('utf-8').strip()
-
-# log in to the second ssh
-print("\nssh {}@{}".format(user, jp_login_host))
-dns_err, jp_login_host = check_dns(jp_login_host)
-if dns_err == 1:
-    print("ssh {}@{}".format(user, jp_login_host))
-elif dns_err == 2:
-    sys.exit(1)
-second_ssh = CustomSSH(timeout=10, ignore_sighup=False, options={"PubkeyAuthentication": "no"})
-second_ssh.force_password = True
-second_ssh.silence_logs()
-second_ssh.login(jp_login_host, user, o2_pass)
-
-# ssh into the running interactive node
-print("\nssh -N -L {0}:127.0.0.1:{0} {1}".format(jp_port, jp_interactive_host))
-second_ssh.PROMPT = pass_pat
-second_ssh.sendline("ssh -N -L {0}:127.0.0.1:{0} {1}".format(jp_port, jp_interactive_host))
-if not second_ssh.prompt():
-    eprint("the timeout was reached.")
-    sys.exit(1)
-second_ssh.silence_logs()
-second_ssh.sendline(o2_pass)
-zero(o2_pass)  # password is not needed anymore
-second_ssh.logfile_read = stdout_buffer  # print any errors/output from second_ssh to stdout
-
-# open Jupyter in browser
-print("\nJupyter is ready! Access at:\n{}\nOpening in browser...".format(jp_site))
-webbrowser.open(jp_site, new=2)
-
-# quit XQuartz because the application is not necessary to keep the connection open.
-if not pargs.keepxquartz:
-    try_quit_xquartz()
-
-# keep the ssh session alive and allow input such as Ctrl-C to close Jupyter
-login_ssh.silence_logs()
-if pargs.keepalive:
-    interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')  # exits when you log out of the login shell
-    login_ssh.interact(output_filter=interact_filter.exit_on_find)
-else:
-    interact_filter = FilteredOut(None, b'[PEXPECT]$ ')
-    login_ssh.interact(output_filter=interact_filter.exit_on_find)  # exits when jupyter exits and [PEXPECT]$ appears
+    jupyter_o2.connect()

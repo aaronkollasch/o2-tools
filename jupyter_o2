@@ -66,6 +66,8 @@ parser.add_argument("-m", "--mem", type=str, default=DEFAULT_JP_MEM, help="Memor
 parser.add_argument("-c", "-n", dest="cores", type=int, default=DEFAULT_JP_CORES, help="Cores to allocate for Jupyter")
 parser.add_argument("-k", "--keepalive",  default=False, action='store_true',
                     help="Keep interactive session alive after exiting Jupyter")
+parser.add_argument("--kq", "--keepxquartz", dest="keepxquartz",  default=False, action='store_true',
+                    help="Do not quit XQuartz")
 pargs = parser.parse_args(sys.argv[1:])
 
 user = pargs.user
@@ -125,9 +127,9 @@ def check_dns(hostname, dns_groups=dns_server_groups):
     else:
         dns_err_code = -1
     if dns_err_code == 1:
-        print("Found IP: {}".format(jp_login_host))
+        print("Found IP: {}".format(hostname))
     elif dns_err_code == 2:
-        eprint("No IP found for {}".format(jp_login_host))
+        eprint("No IP found for {}".format(hostname))
     return dns_err_code, hostname
 
 
@@ -169,6 +171,54 @@ class FilteredOut(object):
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
+
+
+def try_quit_xquartz():
+    """Quit XQuartz on macs
+    First attempts to check if there is a window open in XQuartz, using Quartz.
+        (Install using `pip install pyobjc-framework-Quartz`)
+    If Quartz is installed, and there is a window open in XQuartz, it will not quit XQuartz.
+    If Quartz is not installed and there is a window open in XQuartz,
+        XQuartz open a dialog to ask if you really want to quit it.
+    Otherwise XQuartz will silently quit.
+    """
+    if sys.platform != "darwin":
+        return
+    if not xquartz_is_open():
+        return
+
+    print("Quitting XQuartz... ", end='', flush=True)
+
+    try:
+        from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, \
+            kCGNullWindowID, kCGWindowOwnerName, kCGWindowName, kCGWindowNumber
+        windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+        if not any(window[kCGWindowOwnerName] == "XQuartz" for window in windows):
+            quit_xquartz()
+        else:
+            open_windows = [window for window in windows if window[kCGWindowOwnerName] == "XQuartz"]
+            print("\nXQuartz window(s) are open. Not quitting.")
+            print("Open windows: {}".format(
+                [(window[kCGWindowName], window[kCGWindowNumber]) for window in open_windows]))
+            return
+    except ImportError:
+        quit_xquartz()
+
+    if not xquartz_is_open():
+        print("Success.")
+    else:
+        print("Failed.")
+
+
+def xquartz_is_open():
+    proc = subprocess.Popen("pgrep -f XQuartz", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    out, err = proc.communicate()
+    return len(out) > 0
+
+
+def quit_xquartz():
+    if sys.platform == "darwin":
+        subprocess.call("osascript -e 'quit app \"XQuartz\"'", shell=True)
 
 
 def clean(*_):
@@ -418,7 +468,7 @@ login_ssh.logfile_read = stdout_buffer
 # get the address jupyter is running at
 site_pat = re.compile("\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s".format(jp_port).encode('utf-8'))
 login_ssh.PROMPT = site_pat
-if not login_ssh.prompt(10):  # timed out; failed to launch jupyter
+if not login_ssh.prompt():  # timed out; failed to launch jupyter
     if pargs.keepalive:
         interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')  # exits when you log out of the login shell
         login_ssh.interact(output_filter=interact_filter.exit_on_find)
@@ -454,6 +504,10 @@ second_ssh.logfile_read = stdout_buffer  # print any errors/output from second_s
 # open Jupyter in browser
 print("\nJupyter is ready! Access at:\n{}\nOpening in browser...".format(jp_site))
 webbrowser.open(jp_site, new=2)
+
+# quit XQuartz because the application is not necessary to keep the connection open.
+if not pargs.keepxquartz:
+    try_quit_xquartz()
 
 # keep the ssh session alive and allow input such as Ctrl-C to close Jupyter
 login_ssh.silence_logs()

@@ -187,7 +187,7 @@ def try_quit_xquartz():
     if not xquartz_is_open():
         return
 
-    print("Quitting XQuartz... ", end='', flush=True)
+    print("Quitting XQuartz... ", end='')
 
     try:
         from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, \
@@ -234,7 +234,7 @@ def clean(*_):
     if "second_ssh" in globals():
         if not second_ssh.closed:
             print("Closing second_ssh")
-        login_ssh.close(force=True)
+        second_ssh.close(force=True)
 
 
 def term(*_):

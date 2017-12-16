@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # author: Aaron Kollasch
-# date: 2017-12-15
+# date: 2017-12-16
 """A script to launch and connect to a Jupyter session on Orchestra 2.
 as described at https://wiki.rc.hms.harvard.edu/display/O2/Jupyter+on+O2
 
@@ -43,9 +43,8 @@ except ImportError:
     dns = None
 
 #############################################################
-# variables to set                                          #
-# choose a DEFAULT_JP_PORT that is open on your machine     #
-# and set SOURCE_JUPYTER_CALL to an appropriate command     #
+# program-wide and system-specific defaults                 #
+# set SOURCE_JUPYTER_CALL to an appropriate command         #
 #############################################################
 
 DEFAULT_HOST = "o2.hms.harvard.edu"
@@ -60,8 +59,24 @@ SOURCE_JUPYTER_CALL = "source ~/.conda/envs/py35/bin/activate py35"
 
 SRUN_CALL_FORMAT = "srun -t {} --mem {} -n {} --pty -p interactive --x11 /bin/bash"
 JP_CALL_FORMAT = "jupyter {} --port={} --browser='none'"
-SITE_PATTERN_FORMAT = "\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s"  # format with jupyter port
+
+# patterns to search for in ssh
+SITE_PATTERN_FORMAT = "\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s"  # {} formatted with jupyter port
 PASSWORD_PATTERN = re.compile(b"[\w-]+@[\w-]+'s password: ")  # e.g. "user@compute-e-16-175's password: "
+
+JO2_ARG_PARSER = argparse.ArgumentParser(description='Launch and connect to a Jupyter session on O2.')
+JO2_ARG_PARSER.add_argument("user", type=str, help="O2 username")
+JO2_ARG_PARSER.add_argument("subcommand", help="the subcommand to launch")
+JO2_ARG_PARSER.add_argument("--host", type=str, default=DEFAULT_HOST, help="Host to connect to")
+JO2_ARG_PARSER.add_argument("-p", "--port", type=int, default=DEFAULT_JP_PORT, help="Available port on your system")
+JO2_ARG_PARSER.add_argument("-t", "--time", type=str, default=DEFAULT_JP_TIME, help="Time to run Jupyter")
+JO2_ARG_PARSER.add_argument("-m", "--mem", type=str, default=DEFAULT_JP_MEM, help="Memory to allocate for Jupyter")
+JO2_ARG_PARSER.add_argument("-c", "-n", dest="cores", type=int, default=DEFAULT_JP_CORES,
+                            help="Cores to allocate for Jupyter")
+JO2_ARG_PARSER.add_argument("-k", "--keepalive", default=False, action='store_true',
+                            help="Keep interactive session alive after exiting Jupyter")
+JO2_ARG_PARSER.add_argument("--kq", "--keepxquartz", dest="keepxquartz", default=False, action='store_true',
+                            help="Do not quit XQuartz")
 
 if sys.platform.startswith("linux"):
     PINENTRY_PATH = "/usr/bin/pinentry"
@@ -108,27 +123,26 @@ class JupyterO2(object):
         self.host = host
         self.subcommand = subcommand
         self.jp_port = jp_port
-        self.jp_time = jp_time
-        self.jp_mem = jp_mem
-        self.jp_cores = jp_cores
         self.keep_alive = keepalive
         self.keep_xquartz = keepxquartz
 
-        self.srun_call = SRUN_CALL_FORMAT.format(self.jp_time, self.jp_mem, self.jp_cores)
-        self.jp_call = JP_CALL_FORMAT.format(self.subcommand, self.jp_port)
+        self.srun_call = SRUN_CALL_FORMAT.format(jp_time, jp_mem, jp_cores)
+        self.jp_call = JP_CALL_FORMAT.format(subcommand, jp_port)
 
+        self.__o2_pass = ""
+        self.__pinentry = Pinentry(pinentry_path=PINENTRY_PATH, fallback_to_getpass=True)
         self.__login_ssh = CustomSSH(timeout=60, ignore_sighup=False, options={
             "ForwardX11": "yes",
-            "LocalForward": "{} 127.0.0.1:{}".format(self.jp_port, self.jp_port),
+            "LocalForward": "{} 127.0.0.1:{}".format(jp_port, jp_port),
             "PubkeyAuthentication": "no"})
         self.__second_ssh = CustomSSH(timeout=10, ignore_sighup=False, options={"PubkeyAuthentication": "no"})
 
-        # perform clean() on exit or interrupt
-        atexit.register(self.clean)
+        # perform close() on exit or interrupt
+        atexit.register(self.close)
         for sig in (SIGABRT, SIGINT, SIGTERM):
             signal(sig, self.term)
 
-        self.__pinentry = Pinentry(pinentry_path=PINENTRY_PATH, fallback_to_getpass=True)
+    def ask_for_pin(self):
         self.__o2_pass = self.__pinentry.ask(
             prompt="Enter your passphrase: ",
             description="Connect to O2 server for jupyter {}".format(self.subcommand),
@@ -136,6 +150,11 @@ class JupyterO2(object):
         self.__pinentry.close()
 
     def connect(self):
+        """
+        First SSH into an interactive node and run jupyter.
+        Then SSH into that node to set up forwarding.
+        Finally, open the jupyter notebook page in the browser.
+        """
         # start login ssh
         print("ssh {}@{}".format(self.user, self.host))
         dns_err, host = check_dns(self.host)
@@ -222,13 +241,15 @@ class JupyterO2(object):
 
         # quit XQuartz because the application is not necessary to keep the connection open.
         if not self.keep_xquartz:
-            try:
-                try_quit_xquartz()
-            except:
-                print("Quitting XQuartz Failed")
-                pass
+            print("Quitting XQuartz... ", end='')
+            try_quit_xquartz()
+            if not xquartz_is_open():
+                print("Success.")
+            else:
+                print("Failed to quit.")
 
-        # keep the ssh session alive and allow input such as Ctrl-C to close Jupyter
+    def interact(self):
+        """Keep the ssh session alive and allow input such as Ctrl-C to close Jupyter."""
         self.__login_ssh.silence_logs()
         if self.keep_alive:  # exit when you log out of the login shell
             interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')
@@ -237,12 +258,10 @@ class JupyterO2(object):
             interact_filter = FilteredOut(None, b'[PEXPECT]$ ')
             self.__login_ssh.interact(output_filter=interact_filter.exit_on_find)
 
-    def clean(self, *_):
+    def close(self, *_):
         print("Cleaning up\r")
-        if "o2_pass" in globals():
-            zero(self.__o2_pass)
-        if "pinentry" in globals():
-            self.__pinentry.close()
+        zero(self.__o2_pass)
+        self.__pinentry.close()
         if not self.__login_ssh.closed:
             print("Closing login_ssh")
             self.__login_ssh.close(force=True)
@@ -251,7 +270,7 @@ class JupyterO2(object):
             self.__second_ssh.close(force=True)
 
     def term(self, *_):
-        self.clean()
+        self.close()
         sys.stdout.close()
         sys.stderr.close()
         sys.stdin.close()
@@ -328,8 +347,7 @@ def eprint(*args, **kwargs):
 
 def try_quit_xquartz():
     """Quit XQuartz on macs
-    First attempts to check if there is a window open in XQuartz, using Quartz.
-        (Install using `pip install pyobjc-framework-Quartz`)
+    First attempts to check if there is a window open in XQuartz, using Quartz (pyobjc-framework-Quartz).
     If Quartz is installed, and there is a window open in XQuartz, it will not quit XQuartz.
     If Quartz is not installed and there is a window open in XQuartz,
         XQuartz open a dialog to ask if you really want to quit it.
@@ -340,27 +358,48 @@ def try_quit_xquartz():
     if not xquartz_is_open():
         return
 
-    print("Quitting XQuartz... ", end='')
-
-    try:
-        from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, \
-            kCGNullWindowID, kCGWindowOwnerName, kCGWindowName, kCGWindowNumber
-        windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
-        if not any(window[kCGWindowOwnerName] == "XQuartz" for window in windows):
-            quit_xquartz()
-        else:
-            open_windows = [window for window in windows if window[kCGWindowOwnerName] == "XQuartz"]
-            print("\nXQuartz window(s) are open. Not quitting.")
-            print("Open windows: {}".format(
-                [(window[kCGWindowName], window[kCGWindowNumber]) for window in open_windows]))
-            return
-    except ImportError:
+    open_windows = get_xquartz_open_windows()
+    if not open_windows:  # if open_windows() returns None (error) or an empty list of windows, send the quit command
         quit_xquartz()
-
-    if not xquartz_is_open():
-        print("Success.")
     else:
-        print("Failed.")
+        print("\nXQuartz window(s) are open. Not quitting.")
+        try:
+            print("Open windows: {}".format(
+                [(window['kCGWindowName'], window['kCGWindowNumber']) for window in open_windows]))
+        except KeyError:
+            pass
+
+
+def get_xquartz_open_windows():
+    """
+    Get info on all open XQuartz windows.
+    Requires pyobjc-framework-Quartz (install with pip)
+    :return: a list of open windows as python dictionaries
+    """
+    try:
+        from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionAll, kCGNullWindowID
+        from PyObjCTools import Conversion
+
+        # need to use kCGWindowListOptionAll to include windows that are not currently on screen (e.g. minimized)
+        windows = CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID)
+
+        # then filter for XQuartz main windows
+        open_windows = [window for window in windows if window['kCGWindowOwnerName'] == "XQuartz" and
+                        window['kCGWindowLayer'] == 0 and 'kCGWindowName' in window.keys() and
+                        window['kCGWindowName'] not in ['', 'X11 Application Menu', 'X11 Preferences']]
+
+        # convert from NSDictionary to python dictionary
+        open_windows = Conversion.pythonCollectionFromPropertyList(open_windows)
+
+        # # alternative conversion code that does not use PyObjC
+        # open_windows = [dict(window.items()) for window in open_windows]
+        # for window in open_windows:  # convert the kCGWindowBounds __NSCFDictionary to a python dictionary
+        #     window['kCGWindowBounds'] = dict(window['kCGWindowBounds'].items())
+
+        return open_windows
+    except (ImportError, KeyError) as error:
+        eprint("Error: {}".format(error.__class__))
+        return None
 
 
 def xquartz_is_open():
@@ -404,13 +443,12 @@ def zero(s):
         location = id(s) + offset
         ctypes.memset(location, 0, bufsize)
         return True
-    except:
+    except Exception:
         return False
 
 
 def cmd_exists(cmd):
-    return subprocess.call("type " + cmd, shell=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE) == 0
+    return subprocess.call("type " + cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE) == 0
 
 
 class PinentryException(Exception):
@@ -479,7 +517,7 @@ class Pinentry(object):
         self._comm("OPTION lc-ctype=%s" % env("LC_CTYPE", env("LC_ALL", "en_US.UTF-8")))
         try:
             self._comm("OPTION ttyname=%s" % env("TTY", os.ttyname(sys.stdout.fileno())))
-        except:
+        except Exception:
             pass
         if env('TERM'):
             self._comm("OPTION ttytype=%s" % env("TERM"))
@@ -524,21 +562,12 @@ class Pinentry(object):
         return x.replace("%", "%25").replace("\n", "%0A")
 
 
+#############################################################
+# run jupyter_o2 if it is the main program                  #
+#############################################################
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Launch and connect to a Jupyter session on O2.')
-    parser.add_argument("user", type=str, help="O2 username")
-    parser.add_argument("subcommand", help="the subcommand to launch")
-    parser.add_argument("--host", type=str, default=DEFAULT_HOST, help="Host to connect to")
-    parser.add_argument("-p", "--port", type=int, default=DEFAULT_JP_PORT, help="Available port on your system")
-    parser.add_argument("-t", "--time", type=str, default=DEFAULT_JP_TIME, help="Time to run Jupyter")
-    parser.add_argument("-m", "--mem", type=str, default=DEFAULT_JP_MEM, help="Memory to allocate for Jupyter")
-    parser.add_argument("-c", "-n", dest="cores", type=int, default=DEFAULT_JP_CORES,
-                        help="Cores to allocate for Jupyter")
-    parser.add_argument("-k", "--keepalive", default=False, action='store_true',
-                        help="Keep interactive session alive after exiting Jupyter")
-    parser.add_argument("--kq", "--keepxquartz", dest="keepxquartz", default=False, action='store_true',
-                        help="Do not quit XQuartz")
-    pargs = parser.parse_args(sys.argv[1:])
+    pargs = JO2_ARG_PARSER.parse_args(sys.argv[1:])
 
     jupyter_o2 = JupyterO2(
         user=pargs.user,
@@ -552,4 +581,6 @@ if __name__ == "__main__":
         keepxquartz=pargs.keepxquartz,
     )
 
+    jupyter_o2.ask_for_pin()
     jupyter_o2.connect()
+    jupyter_o2.interact()

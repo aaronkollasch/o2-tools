@@ -30,18 +30,17 @@ Within `jupyter_o2`:
     containing jupyter. Use semicolons if necessary.
 - Choose a `DEFAULT_JP_PORT` that is open on your machine (if the current default isn't already)
 
-Either run jupyter_o2 with `./jupyter_o2` or copy it into a folder within your `$PATH`. 
+Either run jupyter_o2 with `./jupyter_o2` or copy it into a folder within your `$PATH`.  
 
-#### Troubleshooting
-##### nbsignatures.db
-If jupyter hangs when opening notebooks for the first time in any session, and the console 
-shows error messages such as:
-  > `The signatures database cannot be opened; maybe it is corrupted or encrypted.`  
-  > `Failed commiting signatures database to disk.`  
+##### Required packages
+- Pexpect
 
-  Disabling the signatures database may be the best option, since there is no non-networked
-  file system shared between all the interactive compute nodes.
-  
-  1. enter an interactive session and generate a notebook config using
-   `jupyter notebook --generate-config`
-  2. in `~/.jupyter/jupyter_notebook_config.py` set `c.NotebookNotary.db_file = ':memory:'`
+##### Optional packages
+- dnspython
+- pyobjc-framework-Quartz
+- pinentry (a command line tool)
+
+##### Operating system
+`jupyter_o2` has been tested on MacOS. It may work on Linux and it would likely require 
+Cygwin and a Cygwin version of Python to work on Windows (for Pexpect and SSH).
+

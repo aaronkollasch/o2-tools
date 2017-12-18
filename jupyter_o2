@@ -32,6 +32,7 @@ import webbrowser
 import ctypes
 import atexit
 from signal import signal, SIGABRT, SIGINT, SIGTERM
+
 from pexpect import pxssh
 try:
     # optional import of dnspython to resolve "Unknown host" errors
@@ -241,12 +242,7 @@ class JupyterO2(object):
 
         # quit XQuartz because the application is not necessary to keep the connection open.
         if not self.keep_xquartz:
-            print("Quitting XQuartz... ", end='')
             try_quit_xquartz()
-            if not xquartz_is_open():
-                print("Success.")
-            else:
-                print("Failed to quit.")
 
     def interact(self):
         """Keep the ssh session alive and allow input such as Ctrl-C to close Jupyter."""
@@ -358,6 +354,7 @@ def try_quit_xquartz():
     if not xquartz_is_open():
         return
 
+    print("Quitting XQuartz... ", end='')
     open_windows = get_xquartz_open_windows()
     if not open_windows:  # if open_windows() returns None (error) or an empty list of windows, send the quit command
         quit_xquartz()
@@ -368,6 +365,10 @@ def try_quit_xquartz():
                 [(window['kCGWindowName'], window['kCGWindowNumber']) for window in open_windows]))
         except KeyError:
             pass
+    if not xquartz_is_open():
+        print("Success.")
+    else:
+        print("Failed to quit.")
 
 
 def get_xquartz_open_windows():

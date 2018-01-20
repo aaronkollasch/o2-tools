@@ -42,5 +42,5 @@ Either run jupyter_o2 with `./jupyter_o2` or copy it into a folder within your `
 
 ##### Operating system
 `jupyter_o2` has been tested on MacOS. It may work on Linux and it would likely require 
-Cygwin and a Cygwin version of Python to work on Windows (for Pexpect and SSH).
+both Cygwin and a Cygwin version of Python to work on Windows (for Pexpect and SSH).
 

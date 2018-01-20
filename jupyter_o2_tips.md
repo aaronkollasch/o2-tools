@@ -17,7 +17,7 @@ SLURM jobs can also be submitted and monitored from within a notebook to avoid t
 
 ### jupyter contrib nbextensions
 jupyter contrib nbextensions adds a useful nbextensions configuration tab 
-to the main jupyter site. It also includes several useful extensions.
+to the main jupyter site. It also includes many useful extensions.
 ##### AutoSaveTime
 Set the autosave time to 2 minutes to reduce the chance of losing changes 
 due to a lost connection or to unexpected closure of the interactive node

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # author: Aaron Kollasch
-# date: 2017-12-16
+# date: 2018-1-20
 """A script to launch and connect to a Jupyter session on Orchestra 2.
 as described at https://wiki.rc.hms.harvard.edu/display/O2/Jupyter+on+O2
 
@@ -46,6 +46,7 @@ except ImportError:
 #############################################################
 # program-wide and system-specific defaults                 #
 # set SOURCE_JUPYTER_CALL to an appropriate command         #
+# select an appropriate DEFAULT_JP_PORT                     #
 #############################################################
 
 DEFAULT_HOST = "o2.hms.harvard.edu"
@@ -90,7 +91,7 @@ if dns is not None:
     DNS_SERVER_GROUPS = [  # dns servers that have entries for loginXX.o2.rc.hms.harvard.edu
         dns.resolver.Resolver().nameservers,                    # current nameservers, checked first
         ["134.174.17.6", "134.174.141.2"],                      # HMS nameservers
-        ["128.103.1.1", "128.103.201.100", "128.103.200.101"]   # HU nameservers
+        ["128.103.1.1", "128.103.201.100", "128.103.200.101"],  # HU nameservers
     ]
     # test that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
 else:
@@ -165,7 +166,7 @@ class JupyterO2(object):
             sys.exit(1)
         self.__login_ssh.force_password = True
         self.__login_ssh.silence_logs()
-        self.__login_ssh.login(host, self.user, self.__o2_pass)
+        self.__login_ssh.login_silenced(host, self.user, self.__o2_pass)
 
         # get the login hostname
         self.__login_ssh.sendline("hostname")
@@ -180,7 +181,7 @@ class JupyterO2(object):
         self.__login_ssh.logfile_read = FilteredOut(STDOUT_BUFFER, b'srun')
         self.__login_ssh.sendline(self.srun_call)
         if not self.__login_ssh.prompt():
-            eprint("the timeout was reached.")
+            eprint("The timeout ({}) was reached.".format(self.__login_ssh.timeout))
             sys.exit(1)
         self.__login_ssh.silence_logs()
         self.__login_ssh.sendline(self.__o2_pass)
@@ -205,11 +206,11 @@ class JupyterO2(object):
         site_pat = re.compile(SITE_PATTERN_FORMAT.format(self.jp_port).encode('utf-8'))
         self.__login_ssh.PROMPT = site_pat
         if not self.__login_ssh.prompt():  # timed out; failed to launch jupyter
+            eprint("Failed to launch jupyter. (timed out, {})".format(self.__login_ssh.timeout))
             if self.keep_alive:
-                interact_filter = FilteredOut(None, b'[PEXPECT]$ logout')  # exits when you log out of the login shell
-                self.__login_ssh.interact(output_filter=interact_filter.exit_on_find)
+                eprint("Starting interactive mode.")
+                self.interact()
             else:
-                eprint("failed to launch jupyter.")
                 sys.exit(1)
         jp_site = self.__login_ssh.after.decode('utf-8').strip()
 
@@ -222,14 +223,14 @@ class JupyterO2(object):
             sys.exit(1)
         self.__second_ssh.force_password = True
         self.__second_ssh.silence_logs()
-        self.__second_ssh.login(jp_login_host, self.user, self.__o2_pass)
+        self.__second_ssh.login_silenced(jp_login_host, self.user, self.__o2_pass)
 
         # ssh into the running interactive node
         print("\nssh -N -L {0}:127.0.0.1:{0} {1}".format(self.jp_port, jp_interactive_host))
         self.__second_ssh.PROMPT = PASSWORD_PATTERN
         self.__second_ssh.sendline("ssh -N -L {0}:127.0.0.1:{0} {1}".format(self.jp_port, jp_interactive_host))
         if not self.__second_ssh.prompt():
-            eprint("the timeout was reached.")
+            eprint("The timeout ({}) was reached.".format(self.__second_ssh.timeout))
             sys.exit(1)
         self.__second_ssh.silence_logs()
         self.__second_ssh.sendline(self.__o2_pass)
@@ -302,6 +303,14 @@ def check_dns(hostname, dns_groups=DNS_SERVER_GROUPS):
 
 
 class CustomSSH(pxssh.pxssh):
+    def login_silenced(self, *args, **kwargs):
+        """Login and suppress the traceback for pxssh exceptions (such as incorrect password errors)."""
+        try:
+            self.login(*args, **kwargs)
+        except pxssh.ExceptionPxssh as err:
+            eprint("pxssh error: {}".format(err))
+            sys.exit(1)
+
     def silence_logs(self):
         """Prevent printing into any logfile."""
         self.logfile = None

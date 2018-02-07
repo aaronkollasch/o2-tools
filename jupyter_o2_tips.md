@@ -5,10 +5,11 @@ There are [many kernels](https://github.com/jupyter/jupyter/wiki/Jupyter-kernels
 available for Jupyter, allowing the user to write notebooks in their desired language.
 
 #### [bash_kernel](https://pypi.python.org/pypi/bash_kernel)
-Since jupyter_o2 runs jupyter on an interactive node, 
-notebooks running a Bash kernel can be used to document the commands 
-you run on O2, without using SLURM to submit additional jobs. 
-`%%bash` can be used to run a command in a subprocess in a notebook running any kernel,
+Since `jupyter_o2` runs Jupyter on an interactive node, 
+bash notebooks can be used to document your session on O2, including
+commands and outputs, without using SLURM to submit additional jobs. 
+
+`%%bash` can be used to run a `bash` command in kernels that support it,
 but it does not remember your working directory or other variables from previous cells.  
  
 Just be sure that your node has sufficient memory for the desired tasks,
@@ -25,10 +26,9 @@ due to a lost connection or to unexpected closure of the interactive node
 
 ### [JupyterLab](https://github.com/jupyterlab/jupyterlab)
 While JupyterLab is currently an alpha preview, 
-it is a more complete environment than a jupyter notebook. 
+it is a more complete environment than jupyter notebook. 
 With notebook and terminal tabs, a text editor, and a file browser, 
-you could run everything you needed on O2 without leaving a single
-browser window.
+you could run everything you need on O2 from a single browser window.
 
 ## Troubleshooting
 #### nbsignatures.db
@@ -44,3 +44,10 @@ shows error messages such as:
    `jupyter notebook --generate-config`
   2. in `~/.jupyter/jupyter_notebook_config.py` set `c.NotebookNotary.db_file = ':memory:'`
   
+#### X11 error
+If you see `srun: error: x11: no local DISPLAY defined`,
+try logging in to the server with `ssh -X` and check your DISPLAY using `echo $DISPLAY`.
+There should be a string printed in response.
+
+If `$DISPLAY` is empty, try reinstalling [XQuartz](https://www.xquartz.org/),
+or run jupyter_o2 with the `-Y` argument to enable trusted X11 forwarding.

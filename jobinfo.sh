@@ -12,7 +12,7 @@ jobinfo() {
     # if no argument is given, then print info on all running or recently finished jobs
     if [ $# -eq 0 ]; then
         squeue -u $USER -t 'all'
-	    return 0
+        return 0
     fi
 
     # print job name and time limit before seff output

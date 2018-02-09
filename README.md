@@ -27,15 +27,20 @@ and finally open the notebook in your browser.
 
 ### Configuration, etc.
 
-#### Edit the `jupyter_o2` file
-- Change `SOURCE_JUPYTER_CALL` to a command that activates your environment that 
-contains jupyter. The command must be one line, so use semicolons if necessary.
+#### Installation
+Run jupyter_o2 with `./jupyter_o2` or copy the file into a folder within your `$PATH`.
+
+#### Edit the `jupyter_o2.cfg` file
+- After running jupyter_o2 once, cancel at the PIN entry step using Ctrl-C.
+A configuration file, `jupyter_o2.cfg`, should have been created at `~/.jupyter_o2/`.
+Edit this file.
+- Change `MODULE_LOAD_CALL` and `SOURCE_JUPYTER_CALL` to commands that 
+activate your jupyter environment (more description in the file itself). 
+If one or both of these are not necessary, deleting everything after the `=`
+will set it to an empty string.
 - Choose a `DEFAULT_JP_PORT` that is open on your machine,
 if the current default (`8887`) isn't already open. 
 The port can also be specified using `jupyter_o2 -p <port>`.
-
-#### Installation
-Run jupyter_o2 with `./jupyter_o2` or copy the file into a folder within your `$PATH`.  
 
 #### Requirements
 ##### Packages

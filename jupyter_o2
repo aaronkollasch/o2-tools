@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # author: Aaron Kollasch
-# date: 2018-2-7
+# date: 2018-2-8
 """A script to launch and connect to a Jupyter session on Orchestra 2.
 as described at https://wiki.rc.hms.harvard.edu/display/O2/Jupyter+on+O2
 
@@ -33,9 +33,18 @@ import getpass  # fallback if pinentry is not installed (optional "brew install 
 import subprocess
 import re
 import webbrowser
+import shlex
 import ctypes
 import atexit
 from signal import signal, SIGABRT, SIGINT, SIGTERM
+try:
+    from ConfigParser import SafeConfigParser as ConfigParser
+except ImportError:
+    from configparser import ConfigParser
+try:
+    from shlex import quote
+except ImportError:
+    from pipes import quote
 
 from pexpect import pxssh
 try:
@@ -49,19 +58,79 @@ except ImportError:
 
 #############################################################
 # program-wide and system-specific defaults                 #
-# set SOURCE_JUPYTER_CALL to an appropriate command         #
-# select an appropriate DEFAULT_JP_PORT                     #
 #############################################################
 
-DEFAULT_HOST = "o2.hms.harvard.edu"
-DEFAULT_JP_PORT = 8887  # pick an open port on your machine
-DEFAULT_JP_TIME = "0-12:00"  # 12 hours
-DEFAULT_JP_MEM = "1G"
-DEFAULT_JP_CORES = 1
-DEFAULT_JP_SUBCOMMAND = "notebook"
+DEFAULT_CFG = """[Defaults]
+# Uncomment lines in this section to override the default options 
+# by deleting the corresponding semicolons:
+;DEFAULT_HOST = o2.hms.harvard.edu
+;DEFAULT_JP_PORT = 8887
+;DEFAULT_JP_TIME = 0-12:00
+;DEFAULT_JP_MEM = 1G
+;DEFAULT_JP_CORES = 1
+;DEFAULT_JP_SUBCOMMAND = notebook
 
-# the bash command to enter your jupyter environment (must be one line, use semicolons if needed)
-SOURCE_JUPYTER_CALL = "source ~/.conda/envs/py35/bin/activate py35"
+[Settings]
+MODULE_LOAD_CALL = gcc/6.2.0 python/2.7.12
+# The command to load the version of python used by your virtual environment.
+# This setting will direct jupyter_o2 to send `module load <MODULE_LOAD_CALL>`
+# before sending `source <SOURCE_JUPYTER_CALL>`
+# Subtract out `gcc/6.2.0 python/2.7.12` if MODULE_LOAD_CALL is not needed.
+
+SOURCE_JUPYTER_CALL = jupytervenv/bin/activate
+# The bash source command to enter your jupyter environment.
+# Jupyter will send `source <SOURCE_JUPYTER_CALL`, so adding source is not necessary
+# SOURCE_JUPYTER_CALL will be single quoted to block injection. 
+# Thus, it does not support tilde expansion.
+# (jupyter_o2 should start in the home directory so this shouldn't be necessary)
+"""
+
+JO2_DEFAULTS = {
+    "DEFAULT_HOST": "o2.hms.harvard.edu",
+    "DEFAULT_JP_PORT": "8887",
+    "DEFAULT_JP_TIME": "0-12:00",
+    "DEFAULT_JP_MEM": "1G",
+    "DEFAULT_JP_CORES": "1",
+    "DEFAULT_JP_SUBCOMMAND": "notebook",
+    "MODULE_LOAD_CALL": "",
+    "SOURCE_JUPYTER_CALL": "",
+}
+
+_config = ConfigParser(defaults=JO2_DEFAULTS)
+_config.add_section('Defaults')
+_config.add_section('Settings')
+
+CFG_FILENAME = "jupyter_o2.cfg"
+CFG_DIR = os.path.join(os.path.expanduser("~"), ".jupyter_o2")
+
+if not _config.read([
+    os.path.join(CFG_DIR, CFG_FILENAME),
+    CFG_FILENAME
+]):
+    # Reading jupyter_o2.cfg will return [] if it finds nothing
+    print("Configuration file not found.")
+    print("Creating jupyter_o2.cfg at location ~/.jupyter_o2/jupyter_o2.cfg")
+    try:
+        os.makedirs(CFG_DIR)
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(CFG_DIR, CFG_FILENAME), "w") as cfg_file:
+            cfg_file.write(DEFAULT_CFG)
+    except IOError:
+        pass
+    if not _config.read(os.path.join(CFG_DIR, CFG_FILENAME)):
+        print("Config file could not be created. Using internal defaults.")
+
+DEFAULT_HOST = _config.get('Defaults', 'DEFAULT_HOST')
+DEFAULT_JP_PORT = _config.getint('Defaults', 'DEFAULT_JP_PORT')
+DEFAULT_JP_TIME = _config.get('Defaults', 'DEFAULT_JP_TIME')
+DEFAULT_JP_MEM = _config.get('Defaults', 'DEFAULT_JP_MEM')
+DEFAULT_JP_CORES = _config.getint('Defaults', 'DEFAULT_JP_CORES')
+DEFAULT_JP_SUBCOMMAND = _config.get('Defaults', 'DEFAULT_JP_SUBCOMMAND')
+
+MODULE_LOAD_CALL = _config.get('Settings', 'MODULE_LOAD_CALL')
+SOURCE_JUPYTER_CALL = _config.get('Settings', 'SOURCE_JUPYTER_CALL')
 
 SRUN_CALL_FORMAT = "srun -t {} --mem {} -c {} --pty -p interactive --x11 /bin/bash"
 JP_CALL_FORMAT = "jupyter {} --port={} --browser='none'"
@@ -138,8 +207,8 @@ class JupyterO2(object):
         self.keep_alive = keepalive
         self.keep_xquartz = keepxquartz
 
-        self.srun_call = SRUN_CALL_FORMAT.format(jp_time, jp_mem, jp_cores)
-        self.jp_call = JP_CALL_FORMAT.format(subcommand, jp_port)
+        self.srun_call = SRUN_CALL_FORMAT.format(quote(jp_time), quote(jp_mem), jp_cores)
+        self.jp_call = JP_CALL_FORMAT.format(quote(subcommand), jp_port)
 
         self.__o2_pass = ""
         self.__pinentry = Pinentry(pinentry_path=PINENTRY_PATH, fallback_to_getpass=True)
@@ -158,6 +227,7 @@ class JupyterO2(object):
 
         # perform close() on exit or interrupt
         atexit.register(self.close)
+        self.flag_exit = False
         for sig in (SIGABRT, SIGINT, SIGTERM):
             signal(sig, self.term)
 
@@ -183,7 +253,7 @@ class JupyterO2(object):
             sys.exit(1)
         self.__login_ssh.force_password = True
         self.__login_ssh.silence_logs()
-        self.__login_ssh.login_silenced(host, self.user, self.__o2_pass)
+        self.__login_ssh.login(host, self.user, self.__o2_pass)
 
         # get the login hostname
         self.__login_ssh.sendline("hostname")
@@ -212,8 +282,14 @@ class JupyterO2(object):
         print("interactive node: {}\n".format(jp_interactive_host))
 
         # start jupyter
-        self.__login_ssh.sendline(SOURCE_JUPYTER_CALL)
-        self.__login_ssh.prompt()
+        if MODULE_LOAD_CALL:
+            print(join_cmd("module load", MODULE_LOAD_CALL))
+            self.__login_ssh.sendline(join_cmd("module load", MODULE_LOAD_CALL))
+            self.__login_ssh.prompt()
+        if SOURCE_JUPYTER_CALL:
+            print(join_cmd("source", SOURCE_JUPYTER_CALL))
+            self.__login_ssh.sendline(join_cmd("source", SOURCE_JUPYTER_CALL))
+            self.__login_ssh.prompt()
         self.__login_ssh.sendline(self.jp_call)
         self.__login_ssh.logfile_read = STDOUT_BUFFER
 
@@ -238,7 +314,7 @@ class JupyterO2(object):
             sys.exit(1)
         self.__second_ssh.force_password = True
         self.__second_ssh.silence_logs()
-        self.__second_ssh.login_silenced(jp_login_host, self.user, self.__o2_pass)
+        self.__second_ssh.login(jp_login_host, self.user, self.__o2_pass)
 
         # ssh into the running interactive node
         print("\nssh -N -L {0}:127.0.0.1:{0} {1}".format(self.jp_port, jp_interactive_host))
@@ -273,24 +349,39 @@ class JupyterO2(object):
             interact_filter = FilteredOut(None, b'[PEXPECT]$ ')
             self.__login_ssh.interact(output_filter=interact_filter.exit_on_find)
 
-    def close(self, *_):
-        print("Cleaning up\r")
+    def close(self, cprint=print, *_):
+        """cprint allows printing to be disabled if necessary using `cprint=lambda x, end=None, flush=None: None`"""
+        def _cprint(*args, **kwargs):
+            if sys.version_info.major == 2:
+                kwargs.pop('flush', None)
+            cprint(*args, **kwargs)
+        _cprint("Cleaning up\r\n", end="", flush=True)
         zero(self.__o2_pass)
         self.__pinentry.close()
         if not self.__login_ssh.closed:
-            print("Closing login_ssh")
+            _cprint("Closing login_ssh\n", end="", flush=True)
             self.__login_ssh.close(force=True)
         if not self.__second_ssh.closed:
-            print("Closing second_ssh")
+            _cprint("Closing second_ssh\n", end="", flush=True)
             self.__second_ssh.close(force=True)
 
     def term(self, *_):
-        self.close()
-        sys.stdout.close()
-        sys.stderr.close()
-        sys.stdin.close()
-        os.closerange(0, 3)
-        os._exit(1)
+        if not self.flag_exit:
+            self.flag_exit = True
+            try:
+                self.close()
+            except RuntimeError:  # printing from signal can cause RuntimeError: reentrant call
+                self.close(cprint=lambda x, end=None, flush=None: None)
+            sys.stdout.close()
+            sys.stderr.close()
+            sys.stdin.close()
+            os.closerange(0, 3)
+            os._exit(1)
+
+
+def join_cmd(cmd, args_string):
+    """Create a bash command by joining cmd and args_string. Resistant to injection within args_string."""
+    return ' '.join([cmd] + [quote(item) for item in shlex.split(args_string)])
 
 
 def check_dns(hostname, dns_groups=DNS_SERVER_GROUPS):
@@ -321,10 +412,10 @@ def check_dns(hostname, dns_groups=DNS_SERVER_GROUPS):
 
 
 class CustomSSH(pxssh.pxssh):
-    def login_silenced(self, *args, **kwargs):
+    def login(self, *args, **kwargs):
         """Login and suppress the traceback for pxssh exceptions (such as incorrect password errors)."""
         try:
-            self.login(*args, **kwargs)
+            super(CustomSSH, self).login(*args, **kwargs)
         except pxssh.ExceptionPxssh as err:
             eprint("pxssh error: {}".format(err))
             sys.exit(1)
@@ -453,9 +544,9 @@ def quit_xquartz():
 # pin entry and security functions are slightly modified        #
 # from pysectools (Greg V <greg@unrelenting.technology>):       #
 #                                                               #
-# updated pysectools for python 3:                              #
-#   uses bytestrings and flushes stdin after writing            #
-# removed shell=True from subprocess calls                      #
+# - updated pysectools for python 3:                            #
+#     uses bytestrings and flushes stdin after writing          #
+# - removed shell=True from subprocess calls                    #
 #################################################################
 
 

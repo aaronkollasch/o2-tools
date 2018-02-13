@@ -100,27 +100,31 @@ _config = ConfigParser(defaults=JO2_DEFAULTS)
 _config.add_section('Defaults')
 _config.add_section('Settings')
 
-CFG_FILENAME = "jupyter_o2.cfg"
-CFG_DIR = os.path.join(os.path.expanduser("~"), ".jupyter_o2")
+CFG_FILENAME = ".jupyter_o2.cfg"
+CFG_FULLPATH = os.path.join(os.path.expanduser("~"), CFG_FILENAME)
 
-if not _config.read([
-    os.path.join(CFG_DIR, CFG_FILENAME),
-    CFG_FILENAME
-]):
-    # Reading jupyter_o2.cfg will return [] if it finds nothing
-    print("Configuration file not found.")
-    print("Creating jupyter_o2.cfg at location ~/.jupyter_o2/jupyter_o2.cfg")
+if sys.version_info.major == 3:
     try:
-        os.makedirs(CFG_DIR)
-    except OSError:
-        pass
-    try:
-        with open(os.path.join(CFG_DIR, CFG_FILENAME), "w") as cfg_file:
+        with open(CFG_FULLPATH, 'x') as cfg_file:
+            print("Configuration file not found at {}".format(CFG_FULLPATH))
+            print("Creating {}".format(CFG_FILENAME))
             cfg_file.write(DEFAULT_CFG)
-    except IOError:
+    except (IOError, FileExistsError):
         pass
-    if not _config.read(os.path.join(CFG_DIR, CFG_FILENAME)):
-        print("Config file could not be created. Using internal defaults.")
+else:
+    # Check if the .cfg exists before writing
+    # Not using EAFP because there are many reasons why config.read() would return []
+    if not os.path.isfile(CFG_FULLPATH):
+        print("Configuration file not found at {}".format(CFG_FULLPATH))
+        print("Creating {}".format(CFG_FILENAME))
+        try:
+            with open(CFG_FULLPATH, 'w') as cfg_file:
+                cfg_file.write(DEFAULT_CFG)
+        except IOError:
+            pass
+
+if not _config.read(CFG_FULLPATH):
+    print("Config file could not be read. Using internal defaults.")
 
 DEFAULT_HOST = _config.get('Defaults', 'DEFAULT_HOST')
 DEFAULT_JP_PORT = _config.getint('Defaults', 'DEFAULT_JP_PORT')
@@ -131,13 +135,6 @@ DEFAULT_JP_SUBCOMMAND = _config.get('Defaults', 'DEFAULT_JP_SUBCOMMAND')
 
 MODULE_LOAD_CALL = _config.get('Settings', 'MODULE_LOAD_CALL')
 SOURCE_JUPYTER_CALL = _config.get('Settings', 'SOURCE_JUPYTER_CALL')
-
-SRUN_CALL_FORMAT = "srun -t {} --mem {} -c {} --pty -p interactive --x11 /bin/bash"
-JP_CALL_FORMAT = "jupyter {} --port={} --browser='none'"
-
-# patterns to search for in ssh
-SITE_PATTERN_FORMAT = "\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s"  # {} formatted with jupyter port
-PASSWORD_PATTERN = re.compile(b"[\w-]+@[\w-]+'s password: ")  # e.g. "user@compute-e-16-175's password: "
 
 JO2_ARG_PARSER = argparse.ArgumentParser(description='Launch and connect to a Jupyter session on O2.')
 JO2_ARG_PARSER.add_argument("user", type=str, help="O2 username")
@@ -157,6 +154,13 @@ JO2_ARG_PARSER.add_argument("--kq", "--keepxquartz", dest="keepxquartz", default
                             help="Do not quit XQuartz")
 JO2_ARG_PARSER.add_argument("-Y", "--ForwardX11Trusted", dest="forwardx11trusted", default=False, action='store_true',
                             help="Enables trusted X11 forwarding. Equivalent to ssh -Y.")
+
+SRUN_CALL_FORMAT = "srun -t {} --mem {} -c {} --pty -p interactive --x11 /bin/bash"
+JP_CALL_FORMAT = "jupyter {} --port={} --browser='none'"
+
+# patterns to search for in ssh
+SITE_PATTERN_FORMAT = "\s(https?://((localhost)|(127\.0\.0\.1)):{}[\w\-./%?=]+)\s"  # {} formatted with jupyter port
+PASSWORD_PATTERN = re.compile(b"[\w-]+@[\w-]+'s password: ")  # e.g. "user@compute-e-16-175's password: "
 
 if sys.platform.startswith("linux"):
     PINENTRY_PATH = "/usr/bin/pinentry"
@@ -689,7 +693,7 @@ class Pinentry(object):
 #############################################################
 
 if __name__ == "__main__":
-    pargs = JO2_ARG_PARSER.parse_args(sys.argv[1:])
+    pargs = JO2_ARG_PARSER.parse_args()
 
     jupyter_o2 = JupyterO2(**vars(pargs))
 

@@ -12,7 +12,7 @@ Tab autocompletion of the job id is supported.
 Source this script in your `~/.bashrc` file.
 
 ## jupyter_o2
-A python script to launch and connect to a Jupyter session on O2.
+A command line tool to launch and connect to a Jupyter session on O2.
 
 Usage: `jupyter_o2 <USER> <subcommand>`
 

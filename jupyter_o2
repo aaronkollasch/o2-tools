@@ -103,7 +103,7 @@ _config.add_section('Settings')
 CFG_FILENAME = ".jupyter_o2.cfg"
 CFG_FULLPATH = os.path.join(os.path.expanduser("~"), CFG_FILENAME)
 
-if sys.version_info.major == 3:
+if sys.version_info.major >= 3:
     try:
         with open(CFG_FULLPATH, 'x') as cfg_file:
             print("Configuration file not found at {}".format(CFG_FULLPATH))
@@ -179,7 +179,7 @@ if dns is not None:
 else:
     DNS_SERVER_GROUPS = None
 
-if sys.version_info.major == 3:
+if sys.version_info.major >= 3:
     STDOUT_BUFFER = sys.stdout.buffer
 else:
     STDOUT_BUFFER = sys.stdout

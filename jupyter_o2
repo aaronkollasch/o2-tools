@@ -100,7 +100,7 @@ _config = ConfigParser(defaults=JO2_DEFAULTS)
 _config.add_section('Defaults')
 _config.add_section('Settings')
 
-CFG_FILENAME = ".jupyter_o2.cfg"
+CFG_FILENAME = ".jupyter-o2.cfg"
 CFG_FULLPATH = os.path.join(os.path.expanduser("~"), CFG_FILENAME)
 
 if sys.version_info.major >= 3:

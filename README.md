@@ -13,6 +13,7 @@ Source this script in your `~/.bashrc` file.
 
 ## jupyter_o2
 A command line tool to launch and connect to a Jupyter session on O2.
+(Now available as a package, [jupyter-o2](https://github.com/AaronKollasch/jupyter-o2))
 
 Usage: `jupyter_o2 <USER> <subcommand>`
 
@@ -30,9 +31,9 @@ and finally open the notebook in your browser.
 #### Installation
 Run jupyter_o2 with `./jupyter_o2` or copy the file into a folder within your `$PATH`.
 
-#### Edit `.jupyter_o2.cfg`
+#### Edit `.jupyter-o2.cfg`
 - After running jupyter_o2 once, cancel at the PIN entry step using Ctrl-C.
-A configuration file should have been created at `~/.jupyter_o2.cfg`. Edit this file.
+A configuration file should have been created at `~/.jupyter-o2.cfg`. Edit this file.
 - Change `MODULE_LOAD_CALL` and `SOURCE_JUPYTER_CALL` to commands that 
 activate your jupyter environment (more description in the file itself). 
 If one or both of these are not necessary, deleting everything after the `=`

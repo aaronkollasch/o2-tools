@@ -4,9 +4,9 @@
 """A script to launch and connect to a Jupyter session on Orchestra 2.
 as described at https://wiki.rc.hms.harvard.edu/display/O2/Jupyter+on+O2
 
-Usage: jupyter_o2 <USER> <subcommand>
+Usage: jupyter_remote <USER> <subcommand>
 
-Example: jupyter_o2 js123 notebook
+Example: jupyter_remote js123 notebook
     This will launch an X11-enabled ssh, start an interactive node running jupyter notebook,
     ssh into that interactive node to allow requests to be forwarded,
     and finally open the notebook in your browser.
@@ -22,7 +22,7 @@ Troubleshooting:
     try logging in to the server with `ssh -X` and check your DISPLAY using `echo $DISPLAY`.
     There should be a string printed in response.
     Otherwise, try reinstalling XQuartz at https://www.xquartz.org/
-    or run jupyter_o2 with the -Y argument to enable trusted X11 forwarding.
+    or run jupyter_remote with the -Y argument to enable trusted X11 forwarding.
 """
 
 from __future__ import print_function
@@ -50,7 +50,7 @@ from pexpect import pxssh
 try:
     # optional import of dnspython to resolve "Unknown host" errors
     # if you get errors like "Could not establish connection to host",
-    # test the server with nslookup <host>
+    # tests the server with nslookup <host>
     # your current DNS server may not have entries for the individual O2 login nodes
     import dns.resolver
 except ImportError:
@@ -73,7 +73,7 @@ DEFAULT_CFG = """[Defaults]
 [Settings]
 MODULE_LOAD_CALL = gcc/6.2.0 python/2.7.12
 # The command to load the version of python used by your virtual environment.
-# This setting will direct jupyter_o2 to send `module load <MODULE_LOAD_CALL>`
+# This setting will direct jupyter_remote to send `module load <MODULE_LOAD_CALL>`
 # before sending `source <SOURCE_JUPYTER_CALL>`
 # Subtract out `gcc/6.2.0 python/2.7.12` if MODULE_LOAD_CALL is not needed.
 
@@ -82,7 +82,7 @@ SOURCE_JUPYTER_CALL = jupytervenv/bin/activate
 # Jupyter will send `source <SOURCE_JUPYTER_CALL`, so adding source is not necessary
 # SOURCE_JUPYTER_CALL will be single quoted to block injection. 
 # Thus, it does not support tilde expansion.
-# (jupyter_o2 should start in the home directory so this shouldn't be necessary)
+# (jupyter_remote should start in the home directory so this shouldn't be necessary)
 """
 
 JO2_DEFAULTS = {
@@ -100,7 +100,7 @@ _config = ConfigParser(defaults=JO2_DEFAULTS)
 _config.add_section('Defaults')
 _config.add_section('Settings')
 
-CFG_FILENAME = ".jupyter-o2.cfg"
+CFG_FILENAME = ".jupyter-remote.cfg"
 CFG_FULLPATH = os.path.join(os.path.expanduser("~"), CFG_FILENAME)
 
 if sys.version_info.major >= 3:
@@ -175,7 +175,7 @@ if dns is not None:
         ["134.174.17.6", "134.174.141.2"],                      # HMS nameservers
         ["128.103.1.1", "128.103.201.100", "128.103.200.101"],  # HU nameservers
     ]
-    # test that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
+    # tests that you can access the login nodes with nslookup login01.o2.rc.hms.harvard.edu <DNS>
 else:
     DNS_SERVER_GROUPS = None
 
@@ -689,7 +689,7 @@ class Pinentry(object):
 
 
 #############################################################
-# run jupyter_o2 if it is the main program                  #
+# run jupyter_remote if it is the main program                  #
 #############################################################
 
 if __name__ == "__main__":

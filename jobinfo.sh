@@ -26,15 +26,28 @@ jobinfo() {
     sacct -o jobid,alloccpus,state,reqmem,maxrss,averss,maxvmsize,elapsed -j $1
 
     # sstat prints info on currently running job steps
-    if [ -z "$( sstat -j $1 2>&1 > /dev/null )" ]; then
+    # capture stdout and stderr to eliminate duplicate sstat check
+    # https://stackoverflow.com/questions/13806626/capture-both-stdout-and-stderr-in-bash
+#    eval "$({ serr=$({ sout=$(sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j $1); sret=$?; } 2>&1; declare -p sout sret >&2); declare -p serr; } 2>&1)"
+    eval "$({
+        SERR=$({
+            SOUT=$(sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j $1)
+            SRET=$?
+        } 2>&1
+        declare -p SOUT SRET >&2)
+        declare -p SERR
+    } 2>&1)"
+
+    if [[ -z "$SERR" ]]; then
         echo
-        sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j $1
+        echo -e "$SOUT"
     fi
 
     # sprio prints priority info on jobs that have not yet started
-    if [ "$(sprio -j $1)" != "Unable to find jobs matching user/id(s) specified" ]; then
+    SOUT=$(sprio -j $1)
+    if [[ ${SOUT} != "Unable to find jobs matching user/id(s) specified" ]]; then
         echo
-        sprio -j $1
+        echo -e "$SOUT"
     fi
 }
 

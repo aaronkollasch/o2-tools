@@ -27,17 +27,10 @@ jobinfo() {
 
     # sstat prints info on currently running job steps
     # capture stdout and stderr to eliminate duplicate sstat check
-    # https://stackoverflow.com/questions/13806626/capture-both-stdout-and-stderr-in-bash
-#    eval "$({ serr=$({ sout=$(sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j $1); sret=$?; } 2>&1; declare -p sout sret >&2); declare -p serr; } 2>&1)"
-    eval "$({
-        SERR=$({
-            SOUT=$(sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j "$1")
-            SRET=$?
-        } 2>&1
-        declare -p SOUT SRET >&2)
-        declare -p SERR
-    } 2>&1)"
-
+    # https://stackoverflow.com/questions/11027679/capture-stdout-and-stderr-into-different-variables/41069638#41069638
+    local SOUT
+    local SERR
+    catch SOUT SERR sstat -o jobid,ntasks,avecpu,avecpufreq,maxrss,averss,maxvmsize,avevmsize -j "$1"
     if [[ -z "$SERR" ]]; then
         echo
         echo -e "$SOUT"
@@ -57,7 +50,7 @@ jobinfo() {
 _comp_jobinfo()
 {
     # complete with currently running jobs
-    _script_commands="$(squeue -u "$USER" -h -t 'R,CG' -o '%i' | tr '\n' ' ')"
+    _script_commands="$(squeue -u "$USER" -h -t 'R' -o '%i' | tr '\n' ' ')"
 
     # if there are no currently running jobs, complete with all recent jobs
     if [[ -z "$_script_commands" ]]; then
@@ -77,3 +70,20 @@ _comp_jobinfo()
     return 0
 }
 complete -o nospace -F _comp_jobinfo jobinfo
+
+# https://stackoverflow.com/questions/11027679/capture-stdout-and-stderr-into-different-variables/41069638#41069638
+: catch STDOUT STDERR cmd args..
+catch()
+{
+eval "$({
+__2="$(
+  { __1="$("${@:3}")"; } 2>&1;
+  ret=$?;
+  printf '%q=%q\n' "$1" "$__1" >&2;
+  exit $ret
+  )"
+ret="$?";
+printf '%s=%q\n' "$2" "$__2" >&2;
+printf '( exit %q )' "$ret" >&2;
+} 2>&1 )";
+}

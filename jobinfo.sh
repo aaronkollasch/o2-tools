@@ -3,7 +3,8 @@
 # [Aaron Kollasch]  jobinfo.sh
 #                   Provides information on your SLURM jobs.
 #
-# Usage:            jobinfo <job id>
+# Usage:            jobinfo [job id]
+#                   jobcount
 #
 # Installation:     Source this script in your ~/.bashrc file.
 # ------------------------------------------------------------------
@@ -86,4 +87,8 @@ ret="$?";
 printf '%s=%q\n' "$2" "$__2" >&2;
 printf '( exit %q )' "$ret" >&2;
 } 2>&1 )";
+}
+
+jobcount() {
+  squeue -u "$USER" -t 'all' -o '%T' | uniq -c | sort -nr
 }

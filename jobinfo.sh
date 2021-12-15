@@ -90,5 +90,5 @@ printf '( exit %q )' "$ret" >&2;
 }
 
 jobcount() {
-  squeue -u "$USER" -t 'all' -o '%T' | uniq -c | sort -nr
+  squeue -u "$USER" -t 'all' -o '%T' | sort | uniq -c | sort -nr
 }

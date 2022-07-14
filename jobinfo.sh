@@ -16,8 +16,8 @@ jobinfo() {
         return 0
     fi
 
-    # print job name and time limit before seff output
-    echo "Job Name: $(sacct -o jobname,timelimit -j $1 -n -P | head -n 1 | sed -e 's/|/\nTime Limit: /')"
+    # print job name, time limit, and node list before seff output
+    echo "Job Name: $(sacct -o jobname,timelimit,nodelist -j "$1" -n -P | head -n 1 | sed -e 's/|/\nTime Limit: /' | sed -e 's/|/\nNode List: /')"
 
     # seff prints efficiency and other info for the job
     seff "$1"
